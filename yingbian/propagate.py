@@ -1,24 +1,25 @@
-"""Impact propagation: event -> node states -> downstream risk.
+"""W1 spec impact propagation: four states + shifts + ratio.
 
-This is the classic critical-path-method pass over a DAG, plus a small
-weather/closure classifier. It is intentionally dependency-free so it can run
-inside the Android backend, a Lambda, or a plain CLI.
+States: ok / at_risk / invalid / conflict.
+`conflict` means the node is confirmed (locked) and would need to move, so the
+system must stop and ask the user instead of repairing it.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
-from .models import Node, Plan, format_time
-
-
-STATE_ORDER = {"ok": 0, "at_risk": 1, "invalid": 2, "inactive": 3}
-SEVERITY_LABEL = {"local": "局部变化", "medium": "中等变化", "major": "不可抗力 / 重构"}
-STATE_LABEL = {"ok": "正常", "at_risk": "有风险", "invalid": "不可行", "inactive": "未启用"}
+from .models import Plan, format_time, parse_time
 
 
-def worsen(current: str, candidate: str) -> str:
-    return candidate if STATE_ORDER[candidate] > STATE_ORDER[current] else current
+STATE_RANK = {"ok": 0, "at_risk": 1, "conflict": 2, "invalid": 3}
+STATE_LABEL = {"ok": "正常", "at_risk": "有风险", "conflict": "锁定冲突", "invalid": "不可行"}
+PATH_LABEL = {"local": "局部修复", "vote": "发起变更投票", "global": "全体共同变更"}
+
+
+def _worse(current: str, candidate: str) -> str:
+    return candidate if STATE_RANK[candidate] > STATE_RANK[current] else current
 
 
 @dataclass(frozen=True)
@@ -26,24 +27,40 @@ class Event:
     type: str
     start: int | None = None
     end: int | None = None
-    node_ids: tuple[str, ...] = ()
+    prob: float = 1.0
+    node_id: str | None = None
+    minutes: int = 0
+    person_id: str | None = None
     label: str = ""
-    intensity: str = "moderate"
-
-    def window(self) -> tuple[int, int] | None:
-        if self.start is None:
-            return None
-        return self.start, self.end if self.end is not None else self.start + 120
 
     def summary(self) -> str:
         if self.label:
             return self.label
-        if self.type == "rain" and self.start is not None:
-            end = self.end if self.end is not None else self.start + 120
-            return f"降雨 {format_time(self.start)}–{format_time(end)}"
-        if self.type == "closure":
-            return f"临时封闭：{', '.join(self.node_ids)}"
+        if self.type == "rain":
+            return (
+                f"降雨 {format_time(self.start)}–{format_time(self.end)}"
+                f"（概率 {self.prob:.0%}）"
+            )
+        if self.type in {"cancel", "closed"}:
+            return f"{'取消' if self.type == 'cancel' else '临时关闭'} {self.node_id}"
+        if self.type == "delay":
+            return f"{self.node_id} 延后 {self.minutes} 分钟"
+        if self.type == "memberLate":
+            return f"{self.person_id} 晚到 {self.minutes} 分钟"
         return self.type
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> "Event":
+        return cls(
+            type=raw["type"],
+            start=parse_time(raw.get("from")),
+            end=parse_time(raw.get("to")),
+            prob=float(raw.get("prob", 1.0)),
+            node_id=raw.get("nodeId"),
+            minutes=int(raw.get("minutes", 0)),
+            person_id=raw.get("personId"),
+            label=raw.get("label", ""),
+        )
 
 
 @dataclass
@@ -51,191 +68,182 @@ class NodeImpact:
     node_id: str
     title: str
     state: str
-    planned_start: int
     start: int
-    finish: int
-    persons: list[str]
-    slack: int | None = None
-    reason: str = ""
-
-    @property
-    def affected(self) -> bool:
-        return self.state in {"at_risk", "invalid"}
+    shift: int
+    reason: str
+    confirmed: bool
 
 
 @dataclass
 class ImpactReport:
     event: Event | None
-    nodes: dict[str, NodeImpact]
-    impact_ratio: float
-    severity: str
-    affected: list[str] = field(default_factory=list)
-    affected_persons: list[str] = field(default_factory=list)
-    critical_path: list[str] = field(default_factory=list)
-    locked_preserved: bool = True
+    states: dict[str, str]
+    shifts: dict[str, int]
+    ratio: float
+    path: str
+    affected_count: int
+    total_count: int
+    details: dict[str, NodeImpact]
+    reasons: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def blocked(self) -> bool:
+        return any(state == "conflict" for state in self.states.values())
+
+    def blocked_node(self, plan: Plan) -> NodeImpact | None:
+        conflicts = [
+            item for item in self.details.values() if item.state == "conflict"
+        ]
+        if not conflicts:
+            return None
+        return sorted(conflicts, key=lambda item: item.start)[0]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "states": dict(self.states),
+            "shifts": dict(self.shifts),
+            "ratio": round(self.ratio, 4),
+            "path": self.path,
+            "affectedCount": self.affected_count,
+            "totalCount": self.total_count,
+        }
 
 
-def classify(node: Node, event: Event | None) -> tuple[str, str]:
-    if not node.active:
-        return "inactive", "备选未启用"
-    if event is None:
-        return "ok", ""
-    if node.id in event.node_ids:
-        return "invalid", f"事件直接命中：{event.summary()}"
-    if event.type == "rain" and event.start is not None and node.outdoor:
-        rain_start, rain_end = event.window() or (event.start, event.start + 120)
-        overlap_start = max(node.start, rain_start)
-        overlap_end = min(node.end, rain_end)
-        if overlap_start < overlap_end:
-            if node.weather_risk == "cancel":
-                return "invalid", f"室外活动遇降雨（{format_time(overlap_start)}–{format_time(overlap_end)}）"
-            if node.weather_risk == "degrade":
-                return "at_risk", "室外活动受降雨影响，可保留但体验下降"
-    return "ok", ""
+def _overlaps(node_start: int, node_end: int, event_start: int, event_end: int) -> bool:
+    return node_start < event_end and node_end > event_start
 
 
-def analyze(plan: Plan, event: Event | None = None) -> ImpactReport:
-    order = plan.topo_order()
-    states: dict[str, str] = {}
-    reasons: dict[str, str] = {}
-    for node in plan.nodes:
-        state, reason = classify(node, event)
-        states[node.id] = state
-        reasons[node.id] = reason
+def _direct_hit(node, event: Event) -> tuple[str, int, str]:
+    """Returns (state, shift, reason) for the direct hit, before propagation."""
+    if event.type in {"cancel", "closed"} and node.id == event.node_id:
+        return "invalid", 0, "餐厅取消" if event.type == "cancel" else "临时关闭"
+    if event.type == "delay" and node.id == event.node_id:
+        return "at_risk", event.minutes, f"上游延后 {event.minutes} 分钟"
+    if event.type == "rain" and event.start is not None and event.end is not None:
+        if event.prob < 0.3:
+            return "ok", 0, ""
+        if node.indoor:
+            return "ok", 0, ""
+        if _overlaps(node.start, node.end, event.start, event.end):
+            return "at_risk", 0, f"室外 + 降雨概率 {event.prob:.0%}"
+    return "ok", 0, ""
 
-    starts: dict[str, int] = {}
-    finishes: dict[str, int] = {}
 
-    for node_id in order:
-        node = plan.node(node_id)
-        if not node.active:
-            starts[node_id] = node.start
-            finishes[node_id] = node.end
-            continue
+def _apply_confirmed_rule(node, state: str) -> str:
+    # A locked node that is only at risk must be surfaced as a conflict.
+    # A locked node that is already invalid stays invalid: the thing is gone,
+    # replacing it at the same slot is still possible (see T3).
+    if node.confirmed and state == "at_risk":
+        return "conflict"
+    return state
 
-        preds = [plan.node(pid) for pid in plan.predecessors(node_id) if plan.node(pid).active]
-        for pred in preds:
-            if states[pred.id] in {"invalid", "at_risk"}:
-                states[node_id] = worsen(states[node_id], "at_risk")
-                reasons[node_id] = reasons[node_id] or f"上游 {pred.id} {STATE_LABEL[states[pred.id]]}"
 
-        if states[node_id] == "invalid":
-            starts[node_id] = node.start
-            finishes[node_id] = node.end
-            continue
+def propagate(plan: Plan, event: Event | None = None) -> ImpactReport:
+    states = {node.id: "ok" for node in plan.nodes}
+    shifts = {node.id: 0 for node in plan.nodes}
+    reasons = {node.id: "" for node in plan.nodes}
 
-        earliest = node.start
-        for pred in preds:
-            earliest = max(earliest, finishes[pred.id] + plan.travel_between(pred.id, node.id))
-        if earliest > node.start:
-            states[node_id] = worsen(states[node_id], "at_risk")
-            reasons[node_id] = reasons[node_id] or "前序完成时间推迟"
+    if event is not None:
+        # memberLate: first version maps to the first node the person participates in
+        if event.type == "memberLate":
+            candidates = [node for node in plan.nodes if event.person_id in node.persons]
+            target = sorted(candidates, key=lambda n: n.start)[0] if candidates else plan.nodes[0]
+            event = Event(
+                type="delay",
+                node_id=target.id,
+                minutes=event.minutes,
+                label=event.label or f"{event.person_id} 晚到 {event.minutes} 分钟",
+            )
 
-        if node.window and earliest < node.window.start:
-            earliest = node.window.start
-        if node.window and earliest > node.window.end:
-            states[node_id] = worsen(states[node_id], "at_risk")
-            reasons[node_id] = reasons[node_id] or "超出时间窗"
+        for node in plan.nodes:
+            if node.dropped or node.resolved:
+                continue
+            state, shift, reason = _direct_hit(node, event)
+            if shift:
+                shifts[node.id] = max(shifts[node.id], shift)
+            if state != "ok":
+                state = _apply_confirmed_rule(node, state)
+                states[node.id] = _worse(states[node.id], state)
+                reasons[node.id] = reasons[node.id] or reason
 
-        finish = earliest + node.duration
-        if node.deadline is not None and finish > node.deadline:
-            states[node_id] = worsen(states[node_id], "at_risk")
-            reasons[node_id] = reasons[node_id] or "超过最晚结束时间"
+    # Propagate shifts until stable. Edges are processed by source start time,
+    # so a single pass handles a linear plan; the outer loop handles branches.
+    changed = True
+    guard = 0
+    while changed and guard < len(plan.edges) + 2:
+        changed = False
+        guard += 1
+        for edge in sorted(plan.edges_of("precedes", "requires"), key=lambda e: plan.node(e.src).start):
+            src = plan.find(edge.src)
+            dst = plan.find(edge.dst)
+            if src is None or dst is None or src.dropped or dst.dropped:
+                continue
+            earliest = src.end + shifts[src.id] + edge.min_gap
+            needed = max(0, earliest - dst.start)
+            if needed <= shifts[dst.id]:
+                continue
+            shifts[dst.id] = needed
+            new_start = dst.start + needed
+            level = "at_risk"
+            reason = f"上游 {src.id} 后移，最早 {format_time(earliest)} 才能开始"
+            if dst.window_latest is not None and new_start > dst.window_latest:
+                level = "invalid"
+                reason = f"新开始 {format_time(new_start)} 晚于最晚 {format_time(dst.window_latest)}"
+            state = _apply_confirmed_rule(dst, level)
+            if STATE_RANK[state] > STATE_RANK[states[dst.id]]:
+                states[dst.id] = state
+                reasons[dst.id] = reason
+                changed = True
 
-        starts[node_id] = earliest
-        finishes[node_id] = finish
+    active = [node for node in plan.nodes if not node.dropped]
+    affected = [node for node in active if states[node.id] != "ok"]
+    total = len(active)
+    ratio = len(affected) / total if total else 0.0
+    if ratio <= 0.30:
+        path = "local"
+    elif ratio <= 0.60:
+        path = "vote"
+    else:
+        path = "global"
 
-    impacts: dict[str, NodeImpact] = {}
-    for node in plan.nodes:
-        start = starts.get(node.id, node.start)
-        finish = finishes.get(node.id, node.end)
-        slack = node.window.end - start if node.window and node.active else None
-        impacts[node.id] = NodeImpact(
+    details = {
+        node.id: NodeImpact(
             node_id=node.id,
             title=node.title,
             state=states[node.id],
-            planned_start=node.start,
-            start=start,
-            finish=finish,
-            persons=list(node.persons),
-            slack=slack,
+            start=node.start + shifts[node.id],
+            shift=shifts[node.id],
             reason=reasons[node.id],
+            confirmed=node.confirmed,
         )
-
-    active = [node.id for node in plan.nodes if node.active]
-    affected = [node_id for node_id in active if impacts[node_id].affected]
-    ratio = len(affected) / len(active) if active else 0.0
-    severity = "local" if ratio <= 0.30 else "medium" if ratio <= 0.60 else "major"
-    persons = sorted(
-        {person for node_id in affected for person in impacts[node_id].persons},
-        key=lambda pid: int(pid[1:]) if pid[1:].isdigit() else pid,
-    )
-    locked_preserved = all(
-        impacts[node.id].start == node.start for node in plan.nodes if node.active and node.locked
-    )
+        for node in plan.nodes
+        if not node.dropped
+    }
     return ImpactReport(
         event=event,
-        nodes=impacts,
-        impact_ratio=ratio,
-        severity=severity,
-        affected=affected,
-        affected_persons=persons,
-        critical_path=_critical_path(plan),
-        locked_preserved=locked_preserved,
+        states=states,
+        shifts=shifts,
+        ratio=ratio,
+        path=path,
+        affected_count=len(affected),
+        total_count=total,
+        details=details,
+        reasons=reasons,
     )
 
 
-def _critical_path(plan: Plan) -> list[str]:
-    order = plan.topo_order()
-    best: dict[str, int] = {}
-    previous: dict[str, str | None] = {}
-    for node_id in order:
-        node = plan.node(node_id)
-        if not node.active:
-            continue
-        best_len = 0
-        best_pred: str | None = None
-        for pred_id in plan.predecessors(node_id):
-            pred = plan.node(pred_id)
-            if not pred.active or pred_id not in best:
-                continue
-            candidate = best[pred_id] + plan.travel_between(pred_id, node_id)
-            if candidate > best_len:
-                best_len, best_pred = candidate, pred_id
-        best[node_id] = best_len + node.duration
-        previous[node_id] = best_pred
-    if not best:
-        return []
-    tail = max(best, key=best.get)
-    path: list[str] = []
-    cursor: str | None = tail
-    while cursor:
-        path.append(cursor)
-        cursor = previous.get(cursor)
-    return list(reversed(path))
-
-
-def render(report: ImpactReport, plan: Plan) -> str:
-    lines = []
-    event_text = report.event.summary() if report.event else "基线（无事件）"
-    lines.append(f"事件：{event_text}")
-    lines.append(
-        f"影响面：{len(report.affected)} 个节点 / {len(plan.active_nodes())} 个活动节点"
-        f" = {report.impact_ratio:.0%} → {SEVERITY_LABEL[report.severity]}"
-    )
-    lines.append("")
-    lines.append(f"{'节点':<5}{'状态':<7}{'计划':<7}{'最早':<7}{'结束':<7}{'缓冲':<6}说明")
-    for node in plan.nodes:
-        impact = report.nodes[node.id]
-        if impact.state == "inactive":
-            continue
-        slack = "-" if impact.slack is None else str(impact.slack)
+def render(report: ImpactReport) -> str:
+    lines = [
+        f"事件：{report.event.summary() if report.event else '基线（无事件）'}",
+        f"影响面：{report.affected_count}/{report.total_count} = {report.ratio:.0%}"
+        f" → {PATH_LABEL[report.path]}",
+        "",
+        f"{'节点':<12}{'状态':<8}{'计划':<7}{'新开始':<8}{'后移':<6}说明",
+    ]
+    for item in report.details.values():
         lines.append(
-            f"{node.id:<5}{STATE_LABEL[impact.state]:<7}"
-            f"{format_time(impact.planned_start):<7}{format_time(impact.start):<7}"
-            f"{format_time(impact.finish):<7}{slack:<6}{impact.reason}"
+            f"{item.node_id:<12}{STATE_LABEL[item.state]:<8}"
+            f"{format_time(item.start - item.shift):<7}"
+            f"{format_time(item.start):<8}{item.shift:<6}{item.reason}"
         )
-    lines.append("")
-    lines.append(f"关键路径：{' → '.join(report.critical_path)}")
-    lines.append(f"需要知情的人：{', '.join(report.affected_persons) or '无'}")
     return "\n".join(lines)

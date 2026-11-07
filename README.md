@@ -1,172 +1,150 @@
-# 应变 · W1 + W2 算法原型
+# 应变 · W1 施工图实现
 
-把「计划图 → 变化 → 影响分析 → 最小改动修复 → 通知/动作清单」这条主线先在命令行跑通。
-
-这是《两个月双赛程实施计划》里 **W1（schema + 12 节点剧本 + 影响传播）** 和 **W2（锁定 + 最小修复 + 三方案 + 保留率）** 的可运行实现。界面（W3）和真实天气（W4）还没接，CLI 就是它们的替身。
+按 `W1施工图` 重写的 schema、四态传播、`shift/replace/drop` 修复，加上 `W2施工图` 的 6 个接口。
+Android 端可以先吃 `fixtures/` 里的 mock，不用等后端。
 
 ## 30 秒跑起来
 
 ```powershell
 python -m pip install -r requirements.txt
-python -m yingbian demo
-```
-
-没有 OR-Tools 也能跑（自动退回贪心修复）：
-
-```powershell
-python -m yingbian repair --no-cpsat --event rain --from 15:00
-```
-
-## 能验什么
-
-| 验收项（来自计划表） | 命令 | 当前结果 |
-|---|---|---|
-| 12 节点「古镇一日游」JSON | `python -m yingbian check` | 12 节点 / 16 条边 / 11 个活动节点 |
-| 输入降雨事件，输出三态 | `python -m yingbian impact --event rain --from 15:00` | 1 个 `invalid`、4 个 `at_risk`，影响面 45% |
-| 锁定不动 + 只改必要节点 | `python -m yingbian repair --event rain --from 15:00` | 改 2 个节点，锁定项 3/3 未动 |
-| 三个方案 | 同上 | A 最小改动 / B 最少打扰 / C 最稳妥 |
-| 求解 < 2 秒 | 同上 | 单方案约 15–120 ms |
-| 只打扰需要动作的人 | 同上 | 4 人中只打断 2 人 |
-
-关键结果：降雨 15:00 时，`n07 游船` 被判为 `invalid`，系统把它换成室内备选 `n08 桌游`；`n01 集合`、`n04 午餐`、`n10 日落` 三个锁定节点的时间与状态完全不动；通知只发给小A、小B，小C、小D 不被弹窗。
-
-## 命令
-
-```powershell
-# 打印计划与基线状态
-python -m yingbian plan
-
-# 只做影响分析
-python -m yingbian impact --event rain --from 15:00 --to 17:00
-
-# 分析 + 修复 + 通知预览
-python -m yingbian repair --event rain --from 15:00 --to 17:00
-
-# 直接封闭某个节点（演示“临时闭店/封路”）
-python -m yingbian repair --event closure --node n07
-
-# 90 秒演示剧本
-python -m yingbian demo
-
-# 数据自检，适合接 CI
 python -m yingbian check
-
-# 给 UI 用的机器可读输出
-python -m yingbian repair --json
+python -m yingbian case T1 --repair --scheme B
 ```
 
-## 数据模型
+## 四个验收用例
 
-一个计划就是一个 DAG，数据在 `data/guzhen_day.json`。
-
-**6 类节点**：`place`｜`slot`｜`transit`｜`reservation`｜`person`｜`task`
-
-**5 类边**：`precedes`｜`requires`｜`same_place`｜`shared_with`｜`alternative_to`
-
-只有 `precedes` 和 `requires` 参与时间传播；`alternative_to` 只在修复时作为候选；`same_place` / `shared_with` 只用于通知分组。
-
-节点里最关键的几个字段：
-
-| 字段 | 含义 |
-|---|---|
-| `start` / `duration` | 计划开始时间与时长（分钟） |
-| `window` | **允许开始的窗口**，不是结束窗口 |
-| `deadline` | 最晚结束时间（用于日落、晚餐、返程） |
-| `locked` | 勾选=锁定；修复时是硬约束，绝不移动 |
-| `outdoor` + `weather_risk` | `none` 不受影响；`degrade` 变 `at_risk`；`cancel` 变 `invalid` |
-| `active` | `false` 表示备选未启用（如室内桌游） |
-| `alt_group` | 同一组内必须恰好启用一个节点 |
-| `persons` | 这个节点涉及谁，决定通知集 |
-
-`travel` 是 12×12 的通行时间矩阵。**这张表是算法正确性的地基**：先用高德 ETA 拉真实值，拉不到就手填，不要用直线距离。
-
-## 算法
-
-### 1. 影响传播（`yingbian/propagate.py`）
-
-按拓扑序做一遍 CPM/PERT：
-
-1. 事件直接命中：`closure` 指定节点，或降雨与室外节点的时间区间相交；`cancel` → `invalid`，`degrade` → `at_risk`。
-2. 前向计算最早开始：`max(计划开始, max(前驱结束 + 通行时间))`。
-3. 超出 `window` / `deadline` → `at_risk`。
-4. 上游 `invalid` 或 `at_risk` → 下游 `at_risk`，形成影响链。
-5. 影响比重 = 受影响节点数 ÷ 活动节点数：`≤30%` 局部、`30–60%` 投票、`>60%` 全体变更。
-
-复杂度 O(V+E)，12 节点是微秒级；输出同时给 `slack`（窗口剩余量）和关键路径。
-
-### 2. 最小修复（`yingbian/repair.py`）
-
-用 OR-Tools CP-SAT 建模，核心不是“重排”，是**少改**：
-
-- 锁定节点：`start == 原时间`，硬约束，永不放宽。
-- 时间边：`start[dst] >= end[src] + travel`，只在两端都启用时生效。
-- 备选组：`AddExactlyOne`，同一时间只能选一个活动。
-- `changed[n]`：开始时间是否变化；`switched[n]`：启用状态是否变化；两者取或得到 `touched[n]`。
-- 通知人数：每个成员一个 `bool`，只要他相关的任一节点被触碰就置 1。
-- 目标：`改动数 × 权重 + 通知人数 × 权重 + 迟到 × 权重 + 位移 − 缓冲`。
-
-三组权重就是三个方案：
-
-| 方案 | 偏好 | 本次结果 |
-|---|---|---|
-| A 最小改动 | 改动权重 100 | 改 2 处，通知 2 人 |
-| B 最少打扰 | 通知权重 50 | 与 A 相同（只有一种可行改法） |
-| C 最稳妥 | 保留室外风险惩罚 60 | 改 3 处，取消自由活动，通知 4 人 |
-
-求解上限 2 秒；装不了 OR-Tools 时退回贪心：先定备选、再按拓扑序前推，锁定节点仍不动。
-
-### 3. 通知与动作（`yingbian/notify.py`）
-
-把“取消游船 + 启用桌游”合并成一条人能读的变更；按 `persons` 生成打断/知会，再按节点类型生成动作清单（改预约要打电话、改集合点要通知谁）。系统只准备话术，不替人执行。
-
-## 目录
-
-```
-yingbian-core/
-├─ data/guzhen_day.json      # 12 节点剧本 + 通行时间矩阵
-├─ yingbian/
-│  ├─ models.py              # schema、校验、拓扑排序
-│  ├─ propagate.py           # 三态传播、影响比重、关键路径
-│  ├─ repair.py              # CP-SAT 最小修复、三方案、贪心回退
-│  ├─ notify.py              # 通知预览、动作清单
-│  └─ cli.py                 # 命令行入口
-├─ tests/                    # 18 个 unittest
-└─ .github/workflows/ci.yml
+```powershell
+python -m yingbian case T1
+python -m yingbian case T2
+python -m yingbian case T3
+python -m yingbian case T4
+python -m yingbian case T1 --repair --scheme B
 ```
 
-## 测试
+| 用例 | 输入 | 期望 | 当前结果 |
+|---|---|---|---|
+| T1 | 降雨 15:00–17:00，概率 70% | 2/12，局部修复，改 2 处，保留率 100% | ✅ |
+| T2 | 集合点延后 60 分钟 | 12/12，`blocked` 在集合点 | ✅ |
+| T3 | 取消午餐 | 1/12，只改 1 处（换江畔小厨） | ✅ |
+| T4 | 锁定日落点 + 降雨 | 日落点 `conflict`，`blocked` | ✅ |
 
 ```powershell
 python -m unittest discover -s tests -v
 ```
 
-覆盖：基线全绿、降雨三态、影响比重、锁定节点不动、备选切换、三方案差异、贪心回退、锁定节点被事件命中时必须交给人。
+当前 17 个测试：schema、T1–T4、6 个接口。
 
-## 推到 GitHub
+## 数据模型
 
-仓库地址：<https://github.com/chenzhuoyu333-dot/yingbian>
+`data/plan-saturday.json` 严格按 W1 §1：
 
-本地已提交并推送到 `main`。换一台机器时：
-
-```powershell
-git clone https://github.com/chenzhuoyu333-dot/yingbian.git
-cd yingbian
+```jsonc
+{
+  "planId": "p_sat_guzhen",
+  "title": "周六古镇一日游",
+  "date": "2026-11-14",
+  "nodes": [{ "id": "n_sunset", "type": "place", "title": "湖边日落点",
+    "start": "15:30", "end": "16:40", "indoor": false, "confirmed": false,
+    "windowLatest": "16:00", "confidence": "high",
+    "alternatives": [{ "id": "a_museum", "title": "市美术馆", "indoor": true,
+      "start": "15:30", "end": "16:40", "travelMin": 20, "sacrifice": "看不到日落" }],
+    "source": { "kind": "consensus", "note": "3 篇攻略推荐", "at": "2026-11-13" } }],
+  "edges": [{ "from": "n_river", "to": "n_sunset", "type": "precedes", "minGapMin": 30 }]
+}
 ```
 
-如果本机需要代理才能访问 GitHub：
+约定：时间只写 `HH:mm`；`confirmed` 就是锁定；备选写在节点里；缓冲 = 实际间隙 − `minGapMin`。
 
-```powershell
-git config http.https://github.com/.proxy http://127.0.0.1:7897
+## 四态与传播
+
+| 状态 | 含义 | 系统动作 |
+|---|---|---|
+| `ok` | 正常 | — |
+| `at_risk` | 受影响，能改 | 自动修复 |
+| `invalid` | 失效，必须改 | 自动修复 |
+| `conflict` | 锁定节点被影响 | 停下问用户 |
+
+`yingbian/propagate.py` 的规则：
+
+1. `rain`：室外 + 时间重叠 + 概率 ≥0.3 → `at_risk`。
+2. `cancel` / `closed` → `invalid`。
+3. `delay` → 该节点 `shift = minutes`。
+4. 下游后移：`needed = max(0, 上游结束 + 上游 shift + minGapMin − 下游开始)`。
+5. `新开始 > windowLatest` → `invalid`。
+6. `confirmed` 收到 `at_risk` → `conflict`；已经 `invalid` 的保持 `invalid`。
+7. `ratio`：≤30% 局部、30–60% 投票、>60% 全体。
+
+## 修复
+
+不是 CP-SAT，是 W1 §3 的规则修复，保证动作可解释、可复现：
+
+```text
+先扫 conflict → 有就 blocked，不修
+按时间顺序处理非 ok 节点：
+  shift   = 后移分钟 × w_shift
+  replace = w_replace + travelMin × 0.5
+  drop    = w_drop
+  选最小代价，改完立刻重跑 propagate
 ```
 
-提交作者目前是中性的 `yingbian-dev` / `dev@yingbian.local`，避免匿名评审露出个人信息；如需改成本人身份，在推送前执行 `git config user.name ...` 和 `git config user.email ...`。
+| 方案 | shift | replace | drop | 性格 |
+|---|---|---|---|---|
+| A 保时间 | 0.2 | 100 | 100 | 宁可挪，也不换点 |
+| B 保体验 | 1 | 50 | 100 | 优先换备选，尽量不删 |
+| C 保少改动 | 3 | 60 | 200 | 能不动就不动 |
+
+返回：`actions + keepRate + sacrifice + changedCount`。
+
+## 6 个接口
+
+```powershell
+uvicorn server.app:app --host 0.0.0.0 --port 8000
+```
+
+| 方法 | 路径 | 用途 |
+|---|---|---|
+| GET | `/api/plan/{planId}` | 取计划 |
+| POST | `/api/plan/{planId}/event` | 四态、shifts、ratio、path |
+| POST | `/api/plan/{planId}/repair` | 三方案 / blocked |
+| POST | `/api/plan/{planId}/apply` | 应用方案，版本 +1 |
+| POST | `/api/plan/{planId}/undo` | 撤销 |
+| GET | `/api/weather?lat=&lng=` | 天气占位（W3 接和风） |
+
+演示 T4 时先用 `POST /api/debug/lock` 锁日落点，再发降雨。
+
+## Android mock
+
+```
+fixtures/plan-saturday.json     # GET /plan
+fixtures/event-rain-T1.json     # T1 四态
+fixtures/repair-T1.json         # 三方案 + actions
+fixtures/blocked-T4.json        # blocked 弹窗
+fixtures/weather.json
+```
+
+改完算法执行 `python scripts/make_fixtures.py` 重新生成。
+
+## 两处口径说明
+
+施工图内部有两处矛盾，代码按“让 T1–T4 全部通过”落地：
+
+1. T2 写日落点 `windowLatest 16:40`，但集合晚到 60 分钟后新开始是 16:30，`16:30 > 16:40` 不成立；为命中 T2 的 `invalid`，fixture 把日落点设为 **16:00**。
+2. §2.2 写“概率 ≥0.6 且完全覆盖 → invalid”，但 T1 的降雨完全覆盖日落点却期望 `at_risk`；第一版按 T1 实现为 `at_risk`，`invalid` 只来自 cancel/closed 和窗口超时。
+
+要改回原文，只改 `propagate.py` 的 `_direct_hit` 和 fixture 的 `windowLatest`，T4 阻断不受影响。
+
+## 目录
+
+```
+yingbian-core/
+├─ data/plan-saturday.json
+├─ fixtures/
+├─ yingbian/{models,propagate,repair,notify,cli}.py
+├─ server/app.py
+├─ scripts/make_fixtures.py
+└─ tests/
+```
 
 ## 下一步
 
-| 周 | 事情 |
-|---|---|
-| W3 | Android/Compose 计划图：直接读 `--json` 输出；节点颜色绑 `state`，锁图标绑 `locked` |
-| W4 | 接和风天气：把 `Event` 换成真实降雨预报；检查点按 `start - 60min` 触发 |
-| W5 | 彩排 90 秒；三个方案里 C 的“多改一处换安全”正好是答辩记忆点 |
-
-W1/W2 到此已经可以验收：**锁定不动、只改必要节点、三方案、<2 秒、通知集正确**，全部有测试和命令行证据。
+W2 界面按 `W2施工图` 做 S1–S5 + 五态；Android 用 Kotlin + Compose，先吃 fixtures，再接 `uvicorn`。

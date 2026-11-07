@@ -1,437 +1,308 @@
-"""Minimum-change repair with OR-Tools CP-SAT.
+"""W1 spec repair: shift / replace / drop, with lock-first blocking.
 
-The hard part is not re-planning; it is *not* re-planning. Locked nodes are
-equality constraints, and everything else carries a change penalty. Three
-weight profiles produce the three plans shown to the user.
+This is intentionally the rule engine from W1施工图 §3, not the CP-SAT solver:
+the demo needs explainable actions and the exact T1-T4 results.
 """
 
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from typing import Any
 
-from .models import Node, Plan, format_time
-from .propagate import Event, classify
-
-
-class RepairError(RuntimeError):
-    """Raised when no repair can satisfy the hard constraints."""
+from .models import Alternative, Node, Plan, format_time
+from .propagate import Event, ImpactReport, propagate
 
 
 @dataclass(frozen=True)
-class SchemeSpec:
+class Scheme:
     key: str
-    name: str
-    tagline: str
-    w_change: int
-    w_notify: int
-    w_late: int
-    w_buffer: int
-    w_risk: int = 0
+    label: str
+    w_shift: float
+    w_replace: float
+    w_drop: float
 
 
-DEFAULT_SCHEMES: tuple[SchemeSpec, ...] = (
-    SchemeSpec("A", "最小改动", "只动必要节点", w_change=100, w_notify=5, w_late=20, w_buffer=0),
-    SchemeSpec("B", "最少打扰", "需要通知的人最少", w_change=20, w_notify=50, w_late=20, w_buffer=0),
-    SchemeSpec("C", "最稳妥", "宁可多改一处，也不留室外风险", w_change=20, w_notify=5, w_late=20, w_buffer=5, w_risk=60),
-)
+SCHEMES: dict[str, Scheme] = {
+    "A": Scheme("A", "保时间", w_shift=0.2, w_replace=100, w_drop=100),
+    "B": Scheme("B", "保体验", w_shift=1, w_replace=50, w_drop=100),
+    "C": Scheme("C", "保少改动", w_shift=3, w_replace=60, w_drop=200),
+}
 
 
 @dataclass
-class Change:
+class Action:
     node_id: str
-    title: str
-    old_start: int
-    new_start: int
-    old_active: bool
-    new_active: bool
-    persons: list[str]
+    action: str
+    reason: str
+    cost: float
+    payload: dict[str, Any] = field(default_factory=dict)
+    sacrifice: str = ""
 
-    def describe(self) -> str:
-        if self.old_active and not self.new_active:
-            return f"{self.node_id} {self.title}：取消"
-        if not self.old_active and self.new_active:
-            return f"{self.node_id} {self.title}：启用"
-        if self.old_start != self.new_start:
-            return (
-                f"{self.node_id} {self.title}：{format_time(self.old_start)}"
-                f" → {format_time(self.new_start)}"
-            )
-        return f"{self.node_id} {self.title}：变更"
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "nodeId": self.node_id,
+            "action": self.action,
+            "payload": self.payload,
+            "reason": self.reason,
+            "cost": round(self.cost, 1),
+            "sacrifice": self.sacrifice,
+        }
 
 
 @dataclass
 class RepairResult:
-    scheme: SchemeSpec
     status: str
-    starts: dict[str, int]
-    active: dict[str, bool]
-    changes: list[Change] = field(default_factory=list)
-    changed_persons: list[str] = field(default_factory=list)
-    locked_preserved: bool = True
-    objective: float = 0.0
-    solve_ms: float = 0.0
-    note: str = ""
+    scheme: str
+    label: str
+    actions: list[Action]
+    blocked_node: str | None
+    message: str
+    keep_rate: float
+    changed_count: int
+    plan: Plan
+    elapsed_ms: float
 
     @property
-    def changed_count(self) -> int:
-        return len(self.changes)
+    def sacrifice(self) -> str:
+        parts = [action.sacrifice for action in self.actions if action.sacrifice]
+        return "；".join(parts) if parts else ""
 
-    def summary(self) -> str:
-        return (
-            f"改动 {self.changed_count} 个节点，锁定项"
-            f"{'全部未动' if self.locked_preserved else '被破坏'}，"
-            f"需通知 {len(self.changed_persons)} 人"
-        )
-
-
-def invalid_nodes(plan: Plan, event: Event | None) -> set[str]:
-    return {
-        node.id
-        for node in plan.nodes
-        if node.active and classify(node, event)[0] == "invalid"
-    }
-
-
-def risky_nodes(plan: Plan, event: Event | None) -> set[str]:
-    return {
-        node.id
-        for node in plan.nodes
-        if node.active and classify(node, event)[0] == "at_risk"
-    }
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status,
+            "id": self.scheme,
+            "label": self.label,
+            "keepRate": round(self.keep_rate, 4),
+            "changedCount": self.changed_count,
+            "actions": [action.to_dict() for action in self.actions],
+            "sacrifice": self.sacrifice,
+            "blockedNode": self.blocked_node,
+            "message": self.message,
+            "elapsedMs": round(self.elapsed_ms, 1),
+        }
 
 
-def _apply_original(plan: Plan, starts: dict[str, int], active: dict[str, bool]) -> None:
-    for node in plan.nodes:
-        starts[node.id] = node.start
-        active[node.id] = node.active
+def _shift_minutes(node: Node, event: Event, state: str) -> int | None:
+    # Shifting only helps a rain-affected node: move it past the rain window.
+    if event.type != "rain" or event.end is None or state != "at_risk":
+        return None
+    needed = max(0, event.end - node.start)
+    if needed <= 0:
+        return None
+    new_start = node.start + needed
+    if node.window_latest is not None and new_start > node.window_latest:
+        return None
+    return needed
 
 
-def _make_changes(plan: Plan, starts: dict[str, int], active: dict[str, bool]) -> list[Change]:
-    changes: list[Change] = []
-    for node in plan.nodes:
-        new_start = starts[node.id]
-        new_active = active[node.id]
-        if new_start != node.start or new_active != node.active:
-            changes.append(
-                Change(
-                    node_id=node.id,
-                    title=node.title,
-                    old_start=node.start,
-                    new_start=new_start,
-                    old_active=node.active,
-                    new_active=new_active,
-                    persons=list(node.persons),
-                )
-            )
-    return changes
+def _replace_helps(node: Node, alt: Alternative, event: Event) -> bool:
+    if event.type == "rain":
+        return alt.indoor
+    if event.type in {"cancel", "closed"}:
+        return alt.id != node.id
+    return True
 
 
-def _changed_persons(plan: Plan, changes: list[Change]) -> list[str]:
-    person_ids = {person for change in changes for person in change.persons}
-    return sorted(
-        person_ids,
-        key=lambda pid: int(pid[1:]) if pid[1:].isdigit() else pid,
+def _keep_rate(original: Plan, working: Plan) -> float:
+    locked = original.confirmed_nodes()
+    if not locked:
+        return 1.0
+    preserved = 0
+    for node in locked:
+        now = working.find(node.id)
+        if now is None or now.dropped:
+            continue
+        if now.start == node.start and now.end == node.end:
+            preserved += 1
+    return preserved / len(locked)
+
+
+def _blocked(plan: Plan, report: ImpactReport, scheme: Scheme, started: float) -> RepairResult:
+    node = report.blocked_node(plan)
+    message = ""
+    if node is not None:
+        message = f"「{node.title}」是你锁定的，但会受影响。要解锁吗？"
+    return RepairResult(
+        status="blocked",
+        scheme=scheme.key,
+        label=scheme.label,
+        actions=[],
+        blocked_node=node.node_id if node else None,
+        message=message,
+        keep_rate=1.0,
+        changed_count=0,
+        plan=plan.clone(),
+        elapsed_ms=(time.perf_counter() - started) * 1000,
     )
 
 
-def repair(
-    plan: Plan,
-    event: Event | None,
-    schemes: tuple[SchemeSpec, ...] = DEFAULT_SCHEMES,
-    time_limit: float = 2.0,
-    use_cpsat: bool = True,
-) -> list[RepairResult]:
-    invalid = invalid_nodes(plan, event)
-    risky = risky_nodes(plan, event)
-    _precheck(plan, invalid)
-    results: list[RepairResult] = []
-    for spec in schemes:
-        if use_cpsat:
-            try:
-                results.append(_solve_cpsat(plan, invalid, risky, spec, time_limit))
+def repair(plan: Plan, event: Event, scheme_key: str = "B", max_rounds: int = 3) -> RepairResult:
+    scheme = SCHEMES[scheme_key]
+    started = time.perf_counter()
+    working = plan.clone()
+    report = propagate(working, event)
+    if report.blocked:
+        return _blocked(plan, report, scheme, started)
+
+    actions: list[Action] = []
+    for _ in range(max_rounds):
+        report = propagate(working, event)
+        if report.blocked:
+            return _blocked(plan, report, scheme, started)
+        unresolved = sorted(
+            [
+                node
+                for node in working.nodes
+                if not node.dropped and report.states.get(node.id, "ok") != "ok"
+            ],
+            key=lambda node: node.start,
+        )
+        if not unresolved:
+            break
+        progressed = False
+        for node in unresolved:
+            state = report.states.get(node.id, "ok")
+            if state == "ok":
                 continue
-            except ImportError:
-                pass
-        results.append(_solve_greedy(plan, invalid, spec))
-    _mark_duplicates(results)
-    return results
+            if node.confirmed and state == "at_risk":
+                return _blocked(plan, report, scheme, started)
 
-
-def _precheck(plan: Plan, invalid: set[str]) -> None:
-    for node_id in invalid:
-        node = plan.node(node_id)
-        if node.locked:
-            raise RepairError(f"锁定节点 {node_id} {node.title} 被事件判为不可行，需要人来决定")
-        if node.alt_group is None and node.kind != "slot":
-            raise RepairError(f"节点 {node_id} {node.title} 没有备选，无法自动修复")
-    for group, nodes in plan.alt_groups().items():
-        if all(node.id in invalid for node in nodes):
-            raise RepairError(f"备选组 {group} 全部不可行，需要人来决定")
-
-
-def _solve_cpsat(
-    plan: Plan,
-    invalid: set[str],
-    risky: set[str],
-    spec: SchemeSpec,
-    time_limit: float,
-) -> RepairResult:
-    try:
-        from ortools.sat.python import cp_model
-    except ImportError as exc:
-        raise ImportError("未安装 ortools") from exc
-
-    started = time.perf_counter()
-    for relax in (False, True):
-        model, variables = _build_model(cp_model, plan, invalid, risky, spec, relax)
-        solver = cp_model.CpSolver()
-        solver.parameters.max_time_in_seconds = time_limit
-        solver.parameters.num_search_workers = 8
-        status = solver.Solve(model)
-        if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            elapsed = (time.perf_counter() - started) * 1000
-            return _extract(plan, spec, solver, variables, status == cp_model.OPTIMAL, elapsed)
-        if status == cp_model.INFEASIBLE and not relax:
-            continue
-        raise RepairError(f"CP-SAT 无法求解（状态 {solver.StatusName(status)}）")
-    raise RepairError("CP-SAT 无法求解")
-
-
-def _build_model(
-    cp_model,
-    plan: Plan,
-    invalid: set[str],
-    risky: set[str],
-    spec: SchemeSpec,
-    relax: bool,
-):
-    model = cp_model.CpModel()
-    horizon = 24 * 60
-    active: dict[str, object] = {}
-    start: dict[str, object] = {}
-    end: dict[str, object] = {}
-    changed: dict[str, object] = {}
-    switched: dict[str, object] = {}
-    touched: dict[str, object] = {}
-    late: dict[str, object] = {}
-    shift: dict[str, object] = {}
-    groups = plan.alt_groups()
-
-    for node in plan.nodes:
-        start[node.id] = model.NewIntVar(0, horizon, f"start_{node.id}")
-        end[node.id] = model.NewIntVar(0, horizon, f"end_{node.id}")
-        if node.alt_group:
-            active[node.id] = model.NewBoolVar(f"active_{node.id}")
-        elif node.kind == "slot":
-            active[node.id] = model.NewBoolVar(f"active_{node.id}")
-        else:
-            active[node.id] = model.NewConstant(1)
-            if node.id in invalid:
-                if node.kind == "slot":
-                    active[node.id] = model.NewBoolVar(f"active_{node.id}")
-                else:
-                    raise RepairError(f"节点 {node.id} 没有备选，无法自动修复")
-        if node.id in invalid:
-            model.Add(active[node.id] == 0)
-        if node.locked:
-            model.Add(active[node.id] == 1)
-
-        model.Add(end[node.id] == start[node.id] + node.duration).OnlyEnforceIf(active[node.id])
-        model.Add(end[node.id] == 0).OnlyEnforceIf(active[node.id].Not())
-        model.Add(start[node.id] == 0).OnlyEnforceIf(active[node.id].Not())
-
-        changed[node.id] = model.NewBoolVar(f"changed_{node.id}")
-        switched[node.id] = model.NewBoolVar(f"switched_{node.id}")
-        touched[node.id] = model.NewBoolVar(f"touched_{node.id}")
-        model.Add(changed[node.id] == 0).OnlyEnforceIf(active[node.id].Not())
-        model.Add(start[node.id] == node.start).OnlyEnforceIf([changed[node.id].Not(), active[node.id]])
-        model.Add(start[node.id] != node.start).OnlyEnforceIf([changed[node.id], active[node.id]])
-        model.Add(active[node.id] == int(node.active)).OnlyEnforceIf(switched[node.id].Not())
-        model.Add(active[node.id] != int(node.active)).OnlyEnforceIf(switched[node.id])
-        model.AddMaxEquality(touched[node.id], [changed[node.id], switched[node.id]])
-
-        delta = model.NewIntVar(-horizon, horizon, f"delta_{node.id}")
-        shift[node.id] = model.NewIntVar(0, horizon, f"shift_{node.id}")
-        model.Add(delta == start[node.id] - node.start)
-        model.Add(shift[node.id] >= delta).OnlyEnforceIf(active[node.id])
-        model.Add(shift[node.id] >= -delta).OnlyEnforceIf(active[node.id])
-        model.Add(shift[node.id] == 0).OnlyEnforceIf(active[node.id].Not())
-
-        late[node.id] = model.NewIntVar(0, 240, f"late_{node.id}")
-        if node.window:
-            model.Add(start[node.id] >= node.window.start).OnlyEnforceIf(active[node.id])
-            if relax and not node.locked:
-                model.Add(start[node.id] <= node.window.end + 180).OnlyEnforceIf(active[node.id])
-                model.Add(late[node.id] >= start[node.id] - node.window.end).OnlyEnforceIf(active[node.id])
-            else:
-                model.Add(start[node.id] <= node.window.end).OnlyEnforceIf(active[node.id])
-        if node.deadline is not None:
-            if relax and not node.locked:
-                model.Add(end[node.id] <= node.deadline + 180).OnlyEnforceIf(active[node.id])
-                model.Add(late[node.id] >= end[node.id] - node.deadline).OnlyEnforceIf(active[node.id])
-            else:
-                model.Add(end[node.id] <= node.deadline).OnlyEnforceIf(active[node.id])
-
-    for edge in plan.edges_of("precedes", "requires"):
-        for a, b in ((edge.src, edge.dst),):
-            model.Add(
-                start[b] >= end[a] + plan.travel_between(a, b)
-            ).OnlyEnforceIf([active[a], active[b]])
-
-    for group, nodes in groups.items():
-        model.AddExactlyOne([active[node.id] for node in nodes])
-
-    notify: dict[str, object] = {}
-    for member in plan.members:
-        notify[member.id] = model.NewBoolVar(f"notify_{member.id}")
-    for node in plan.nodes:
-        for person in node.persons:
-            model.Add(notify[person] >= touched[node.id])
-
-    risk_keep: dict[str, object] = {}
-    for node_id in risky:
-        risk_keep[node_id] = model.NewBoolVar(f"risk_keep_{node_id}")
-        model.Add(risk_keep[node_id] >= active[node_id])
-
-    min_slack = model.NewIntVar(-300, 300, "min_slack")
-    for node in plan.nodes:
-        if node.window:
-            model.Add(min_slack <= node.window.end - start[node.id]).OnlyEnforceIf(active[node.id])
-
-    objective = (
-        spec.w_change * sum(touched.values())
-        + spec.w_notify * sum(notify.values())
-        + spec.w_late * sum(late.values())
-        + 5 * sum(shift.values())
-        + spec.w_risk * sum(risk_keep.values())
-        - spec.w_buffer * min_slack
-    )
-    model.Minimize(objective)
-    return model, {
-        "active": active,
-        "start": start,
-        "end": end,
-        "touched": touched,
-        "notify": notify,
-        "min_slack": min_slack,
-    }
-
-
-def _extract(plan: Plan, spec, solver, variables, optimal: bool, elapsed_ms: float) -> RepairResult:
-    starts: dict[str, int] = {}
-    active: dict[str, bool] = {}
-    for node in plan.nodes:
-        is_active = solver.Value(variables["active"][node.id]) == 1
-        active[node.id] = is_active
-        starts[node.id] = solver.Value(variables["start"][node.id]) if is_active else node.start
-    changes = _make_changes(plan, starts, active)
-    locked_preserved = all(
-        starts[node.id] == node.start and active[node.id] == node.active
-        for node in plan.nodes
-        if node.locked
-    )
-    return RepairResult(
-        scheme=spec,
-        status="OPTIMAL" if optimal else "FEASIBLE",
-        starts=starts,
-        active=active,
-        changes=changes,
-        changed_persons=_changed_persons(plan, changes),
-        locked_preserved=locked_preserved,
-        objective=float(solver.ObjectiveValue()),
-        solve_ms=elapsed_ms,
-    )
-
-
-def _solve_greedy(plan: Plan, invalid: set[str], spec: SchemeSpec) -> RepairResult:
-    started = time.perf_counter()
-    starts: dict[str, int] = {}
-    active: dict[str, bool] = {}
-    _apply_original(plan, starts, active)
-
-    for group, nodes in plan.alt_groups().items():
-        selected = next((node for node in nodes if node.active and node.id not in invalid), None)
-        if selected is None:
-            candidates = [node for node in nodes if node.id not in invalid]
+            candidates: list[tuple[float, int, Action, Alternative | None]] = []
+            minutes = _shift_minutes(node, event, state)
+            if minutes is not None:
+                candidates.append((
+                    minutes * scheme.w_shift,
+                    1,
+                    Action(
+                        node_id=node.id,
+                        action="shift",
+                        reason=f"后移 {minutes} 分钟避开降雨",
+                        cost=minutes * scheme.w_shift,
+                        payload={"minutes": minutes},
+                        sacrifice="",
+                    ),
+                    None,
+                ))
+            for alt in node.alternatives:
+                if not _replace_helps(node, alt, event):
+                    continue
+                cost = scheme.w_replace + alt.travel_min * 0.5
+                candidates.append((
+                    cost,
+                    0,
+                    Action(
+                        node_id=node.id,
+                        action="replace",
+                        reason=f"改去「{alt.title}」",
+                        cost=cost,
+                        payload={
+                            "alternativeId": alt.id,
+                            "fromTitle": node.title,
+                            "toTitle": alt.title,
+                        },
+                        sacrifice=alt.sacrifice or f"改去{alt.title}",
+                    ),
+                    alt,
+                ))
+            drop_allowed = not (node.confirmed and state == "at_risk")
+            if drop_allowed:
+                candidates.append((
+                    scheme.w_drop,
+                    2,
+                    Action(
+                        node_id=node.id,
+                        action="drop",
+                        reason=(
+                            "备选代价更高，选择放弃"
+                            if node.alternatives
+                            else ("没有可用的室内备选" if event.type == "rain" else "跳过该节点")
+                        ),
+                        cost=scheme.w_drop,
+                        sacrifice=node.sacrifice or f"放弃{node.title}",
+                    ),
+                    None,
+                ))
             if not candidates:
-                raise RepairError(f"备选组 {group} 全部不可行")
-            selected = sorted(candidates, key=lambda n: (n.outdoor, n.start))[0]
-        for node in nodes:
-            active[node.id] = node is selected
+                return _blocked(plan, report, scheme, started)
 
-    for node in plan.nodes:
-        if node.id in invalid and node.alt_group is None:
-            if node.kind != "slot":
-                raise RepairError(f"节点 {node.id} 没有备选，无法自动修复")
-            active[node.id] = False
+            _, _, action, alt = min(candidates, key=lambda item: (item[0], item[1]))
+            _apply_action(node, action, alt)
+            actions.append(action)
+            progressed = True
+            report = propagate(working, event)
+            if report.blocked:
+                return _blocked(plan, report, scheme, started)
+        if not progressed:
+            break
 
-    order = plan.topo_order()
-    finishes: dict[str, int] = {}
-    for node_id in order:
-        node = plan.node(node_id)
-        if not active[node_id]:
-            starts[node_id] = node.start
-            finishes[node_id] = node.end
-            continue
-        earliest = node.start
-        for pred_id in plan.predecessors(node_id):
-            if active[pred_id]:
-                earliest = max(earliest, finishes[pred_id] + plan.travel_between(pred_id, node_id))
-        if node.window and earliest < node.window.start:
-            earliest = node.window.start
-        if node.locked and earliest != node.start:
-            raise RepairError(f"锁定节点 {node.id} 无法在原时间执行")
-        starts[node_id] = earliest
-        finishes[node_id] = earliest + node.duration
-
-    changes = _make_changes(plan, starts, active)
+    final_report = propagate(working, event)
+    status = "ok" if all(state == "ok" for state in final_report.states.values()) else "partial"
     return RepairResult(
-        scheme=spec,
-        status="GREEDY",
-        starts=starts,
-        active=active,
-        changes=changes,
-        changed_persons=_changed_persons(plan, changes),
-        locked_preserved=all(
-            starts[node.id] == node.start and active[node.id] == node.active
-            for node in plan.nodes
-            if node.locked
-        ),
-        solve_ms=(time.perf_counter() - started) * 1000,
+        status=status,
+        scheme=scheme.key,
+        label=scheme.label,
+        actions=actions,
+        blocked_node=None,
+        message="",
+        keep_rate=_keep_rate(plan, working),
+        changed_count=len(actions),
+        plan=working,
+        elapsed_ms=(time.perf_counter() - started) * 1000,
     )
 
 
-def _mark_duplicates(results: list[RepairResult]) -> None:
-    seen: dict[tuple, RepairResult] = {}
-    for result in results:
-        signature = (
-            tuple(sorted(result.starts.items())),
-            tuple(sorted(result.active.items())),
-        )
-        if signature in seen:
-            if result.status == "GREEDY":
-                result.note = "贪心回退：与方案 A 相同（安装 OR-Tools 可得到最稳妥方案）"
-            else:
-                result.note = f"与方案 {seen[signature].scheme.key} 相同（当前约束下只有一种可行改法）"
+def _apply_action(node: Node, action: Action, alt: Alternative | None) -> None:
+    if action.action == "shift":
+        minutes = int(action.payload["minutes"])
+        node.start += minutes
+        node.end += minutes
+    elif action.action == "replace":
+        if alt is None:
+            raise ValueError("replace 缺少备选")
+        node.title = alt.title
+        node.indoor = alt.indoor
+        node.start = alt.start
+        node.end = alt.end
+        node.place = alt.place
+        node.sacrifice = alt.sacrifice
+        node.contact = alt.contact or node.contact
+        node.resolved = True
+    elif action.action == "drop":
+        node.dropped = True
+    else:
+        raise ValueError(f"未知动作: {action.action}")
+
+
+def apply_actions(plan: Plan, actions: list[dict[str, Any]]) -> Plan:
+    working = plan.clone()
+    for raw in actions:
+        node = working.find(raw["nodeId"])
+        if node is None:
+            continue
+        kind = raw["action"]
+        payload = raw.get("payload", {})
+        alt = None
+        if kind == "replace":
+            alt = next((a for a in node.alternatives if a.id == payload.get("alternativeId")), None)
+        _apply_action(node, Action(node.id, kind, "", 0, payload), alt)
+    working.version = plan.version + 1
+    return working
+
+
+def render_result(result: RepairResult) -> str:
+    if result.status == "blocked":
+        return f"方案 {result.scheme} · {result.label}\n  阻断：{result.message}"
+    lines = [
+        f"方案 {result.scheme} · {result.label}",
+        f"  动作 {result.changed_count} 个｜保留率 {result.keep_rate:.0%}｜耗时 {result.elapsed_ms:.0f} ms",
+    ]
+    for action in result.actions:
+        detail = action.payload.get("minutes")
+        if detail:
+            lines.append(f"  - {action.node_id} {action.action} {detail} 分钟：{action.reason}")
         else:
-            seen[signature] = result
-
-
-def apply_repair(plan: Plan, result: RepairResult) -> Plan:
-    return plan.copy_with(starts=result.starts, active=result.active)
-
-
-def render_results(plan: Plan, results: list[RepairResult]) -> str:
-    lines = []
-    for result in results:
-        lines.append(f"方案 {result.scheme.key} · {result.scheme.name} —— {result.scheme.tagline}")
-        lines.append(
-            f"  {result.summary()}｜{result.status}｜{result.solve_ms:.0f} ms"
-        )
-        for change in result.changes:
-            lines.append(f"  - {change.describe()}")
-        if result.note:
-            lines.append(f"  * {result.note}")
-        lines.append("")
-    return "\n".join(lines).rstrip()
+            lines.append(f"  - {action.node_id} {action.action}：{action.reason}")
+    if result.sacrifice:
+        lines.append(f"  牺牲：{result.sacrifice}")
+    return "\n".join(lines)
