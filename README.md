@@ -144,23 +144,22 @@ python -m unittest discover -s tests -v
 
 ## 推到 GitHub
 
-本地仓库已经初始化并提交。先在 GitHub 上新建一个**空仓库**（不要勾选 README / .gitignore），然后：
+仓库地址：<https://github.com/chenzhuoyu333-dot/yingbian>
+
+本地已提交并推送到 `main`。换一台机器时：
 
 ```powershell
-cd "C:\Users\胡诗语\Documents\ChatGPT\DJ\yingbian-core"
-git remote add origin https://github.com/<你的用户名>/yingbian-core.git
-git branch -M main
-git push -u origin main
+git clone https://github.com/chenzhuoyu333-dot/yingbian.git
+cd yingbian
 ```
 
-第一次推送会弹出 GitHub 登录窗口。也可以用 SSH：
+如果本机需要代理才能访问 GitHub：
 
 ```powershell
-git remote add origin git@github.com:<你的用户名>/yingbian-core.git
-git push -u origin main
+git config http.https://github.com/.proxy http://127.0.0.1:7897
 ```
 
-如果建仓库时勾了 README，先执行 `git pull --rebase origin main` 再推。
+提交作者目前是中性的 `yingbian-dev` / `dev@yingbian.local`，避免匿名评审露出个人信息；如需改成本人身份，在推送前执行 `git config user.name ...` 和 `git config user.email ...`。
 
 ## 下一步
 
