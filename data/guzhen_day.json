@@ -1,0 +1,130 @@
+{
+  "id": "guzhen-day",
+  "title": "古镇一日游（12 节点剧本）",
+  "version": 1,
+  "day_start": "08:00",
+  "members": [
+    {"id": "p1", "name": "小A", "role": "organizer"},
+    {"id": "p2", "name": "小B", "role": "member"},
+    {"id": "p3", "name": "小C", "role": "member"},
+    {"id": "p4", "name": "小D", "role": "member"}
+  ],
+  "nodes": [
+    {
+      "id": "n01", "kind": "place", "title": "南门地铁站 A 口集合",
+      "start": "08:30", "duration": 20, "window": {"start": "08:20", "end": "08:45"},
+      "outdoor": false, "weather_risk": "none", "locked": true,
+      "persons": ["p1", "p2", "p3", "p4"], "place": "南门地铁站",
+      "source": "manual", "confidence": "high"
+    },
+    {
+      "id": "n02", "kind": "transit", "title": "地铁 + 公交去古镇",
+      "start": "09:05", "duration": 50, "window": {"start": "08:55", "end": "09:10"},
+      "outdoor": false, "weather_risk": "none",
+      "persons": ["p1", "p2", "p3", "p4"],
+      "source": "manual", "confidence": "high"
+    },
+    {
+      "id": "n03", "kind": "place", "title": "老街漫步",
+      "start": "10:20", "duration": 60, "window": {"start": "10:15", "end": "10:40"},
+      "outdoor": true, "weather_risk": "degrade",
+      "persons": ["p1", "p2", "p3", "p4"], "place": "古镇老街",
+      "source": "community", "confidence": "high"
+    },
+    {
+      "id": "n04", "kind": "reservation", "title": "午餐 · 河边餐厅",
+      "start": "11:45", "duration": 60, "window": {"start": "11:40", "end": "11:55"},
+      "deadline": "12:50", "outdoor": false, "weather_risk": "none", "locked": true,
+      "persons": ["p1", "p2", "p3", "p4"], "place": "河边餐厅",
+      "contact": "0580-1234567", "source": "manual", "confidence": "high"
+    },
+    {
+      "id": "n05", "kind": "place", "title": "茶馆休息",
+      "start": "12:50", "duration": 50, "window": {"start": "12:40", "end": "13:20"},
+      "outdoor": false, "weather_risk": "none",
+      "persons": ["p1", "p2", "p3", "p4"], "place": "老宅茶馆",
+      "source": "community", "confidence": "medium"
+    },
+    {
+      "id": "n06", "kind": "place", "title": "扎染手作",
+      "start": "14:00", "duration": 80, "window": {"start": "13:55", "end": "14:20"},
+      "outdoor": false, "weather_risk": "none",
+      "persons": ["p3", "p4"], "place": "染坊",
+      "source": "community", "confidence": "high"
+    },
+    {
+      "id": "n07", "kind": "place", "title": "古镇游船",
+      "start": "14:00", "duration": 80, "window": {"start": "13:55", "end": "14:20"},
+      "outdoor": true, "weather_risk": "cancel", "alt_group": "afternoon",
+      "persons": ["p1", "p2"], "place": "游船码头",
+      "source": "community", "confidence": "high"
+    },
+    {
+      "id": "n08", "kind": "place", "title": "室内桌游（备选）",
+      "start": "14:00", "duration": 80, "window": {"start": "13:55", "end": "14:20"},
+      "outdoor": false, "weather_risk": "none", "active": false,
+      "alt_group": "afternoon", "persons": ["p1", "p2"], "place": "茶馆二楼",
+      "source": "manual", "confidence": "medium"
+    },
+    {
+      "id": "n09", "kind": "slot", "title": "河边自由活动",
+      "start": "15:25", "duration": 40, "window": {"start": "15:20", "end": "15:55"},
+      "outdoor": true, "weather_risk": "degrade",
+      "persons": ["p1", "p2", "p3", "p4"], "place": "河畔",
+      "source": "manual", "confidence": "low"
+    },
+    {
+      "id": "n10", "kind": "place", "title": "日落观景台",
+      "start": "16:30", "duration": 45, "window": {"start": "16:30", "end": "17:10"},
+      "deadline": "17:55", "outdoor": true, "weather_risk": "degrade", "locked": true,
+      "persons": ["p1", "p2", "p3", "p4"], "place": "西岸观景台",
+      "source": "community", "confidence": "high"
+    },
+    {
+      "id": "n11", "kind": "reservation", "title": "晚餐 · 古镇酒楼",
+      "start": "18:00", "duration": 60, "window": {"start": "18:00", "end": "18:30"},
+      "deadline": "19:30", "outdoor": false, "weather_risk": "none",
+      "persons": ["p1", "p2", "p3", "p4"], "place": "古镇酒楼",
+      "contact": "0580-7654321", "source": "manual", "confidence": "high"
+    },
+    {
+      "id": "n12", "kind": "transit", "title": "返程",
+      "start": "19:55", "duration": 45, "window": {"start": "19:50", "end": "20:20"},
+      "outdoor": false, "weather_risk": "none",
+      "persons": ["p1", "p2", "p3", "p4"],
+      "source": "manual", "confidence": "high"
+    }
+  ],
+  "edges": [
+    {"from": "n01", "to": "n02", "type": "precedes"},
+    {"from": "n02", "to": "n03", "type": "precedes"},
+    {"from": "n03", "to": "n04", "type": "precedes"},
+    {"from": "n04", "to": "n05", "type": "requires"},
+    {"from": "n05", "to": "n06", "type": "precedes"},
+    {"from": "n05", "to": "n07", "type": "precedes"},
+    {"from": "n05", "to": "n08", "type": "precedes"},
+    {"from": "n06", "to": "n09", "type": "precedes"},
+    {"from": "n07", "to": "n09", "type": "precedes"},
+    {"from": "n08", "to": "n09", "type": "precedes"},
+    {"from": "n09", "to": "n10", "type": "precedes"},
+    {"from": "n10", "to": "n11", "type": "precedes"},
+    {"from": "n11", "to": "n12", "type": "requires"},
+    {"from": "n04", "to": "n05", "type": "same_place"},
+    {"from": "n06", "to": "n07", "type": "shared_with"},
+    {"from": "n08", "to": "n07", "type": "alternative_to"}
+  ],
+  "travel": {
+    "n01": {"n01": 0, "n02": 15, "n03": 45, "n04": 47, "n05": 50, "n06": 55, "n07": 52, "n08": 55, "n09": 58, "n10": 60, "n11": 58, "n12": 12},
+    "n02": {"n01": 15, "n02": 0, "n03": 25, "n04": 27, "n05": 30, "n06": 32, "n07": 35, "n08": 38, "n09": 40, "n10": 45, "n11": 43, "n12": 20},
+    "n03": {"n01": 45, "n02": 25, "n03": 0, "n04": 5, "n05": 8, "n06": 10, "n07": 12, "n08": 10, "n09": 15, "n10": 20, "n11": 18, "n12": 38},
+    "n04": {"n01": 47, "n02": 27, "n03": 5, "n04": 0, "n05": 4, "n06": 5, "n07": 6, "n08": 5, "n09": 10, "n10": 15, "n11": 13, "n12": 40},
+    "n05": {"n01": 50, "n02": 30, "n03": 8, "n04": 4, "n05": 0, "n06": 3, "n07": 4, "n08": 4, "n09": 8, "n10": 13, "n11": 12, "n12": 43},
+    "n06": {"n01": 55, "n02": 32, "n03": 10, "n04": 5, "n05": 3, "n06": 0, "n07": 3, "n08": 3, "n09": 5, "n10": 12, "n11": 10, "n12": 45},
+    "n07": {"n01": 52, "n02": 35, "n03": 12, "n04": 6, "n05": 4, "n06": 3, "n07": 0, "n08": 4, "n09": 5, "n10": 12, "n11": 10, "n12": 47},
+    "n08": {"n01": 55, "n02": 38, "n03": 10, "n04": 5, "n05": 4, "n06": 3, "n07": 4, "n08": 0, "n09": 5, "n10": 13, "n11": 11, "n12": 50},
+    "n09": {"n01": 58, "n02": 40, "n03": 15, "n04": 10, "n05": 8, "n06": 5, "n07": 5, "n08": 5, "n09": 0, "n10": 10, "n11": 8, "n12": 48},
+    "n10": {"n01": 60, "n02": 45, "n03": 20, "n04": 15, "n05": 13, "n06": 12, "n07": 12, "n08": 13, "n09": 10, "n10": 0, "n11": 12, "n12": 55},
+    "n11": {"n01": 58, "n02": 43, "n03": 18, "n04": 13, "n05": 12, "n06": 10, "n07": 10, "n08": 11, "n09": 8, "n10": 12, "n11": 0, "n12": 53},
+    "n12": {"n01": 12, "n02": 20, "n03": 38, "n04": 40, "n05": 43, "n06": 45, "n07": 47, "n08": 50, "n09": 48, "n10": 55, "n11": 53, "n12": 0}
+  }
+}

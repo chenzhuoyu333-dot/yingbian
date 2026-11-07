@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yingbian-core"
+version = "0.1.0"
+description = "应变：行程影响分析与最小改动修复（W1 + W2 原型）"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+solver = ["ortools>=9.10"]
+
+[project.scripts]
+yingbian = "yingbian.cli:main"
+
+[tool.setuptools]
+packages = ["yingbian"]
