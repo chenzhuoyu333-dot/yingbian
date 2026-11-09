@@ -5,11 +5,28 @@ Android 端在 `android/`，默认吃 `fixtures/` 里的 mock，不用等后端�
 
 ## 30 秒跑起来
 
+不会敲命令：直接双击根目录的 `check-W1.bat`，它会跑完 17 个单元测试和 7 项接口巡检，
+最后一行显示「7/7 项通过」就是 W1 验收 OK。
+
 ```powershell
 python -m pip install -r requirements.txt
 python -m yingbian check
 python -m yingbian case T1 --repair --scheme B
 ```
+
+## W1 怎么验收
+
+W1 是服务端的算法，没有自己的界面。验收分两层：
+
+| 层 | 看什么 | 命令 / 入口 |
+|---|---|---|
+| 规则层 | T1–T4 四个用例的期望状态、方案动作、保留率 | `python -m yingbian case T1 --repair --scheme B` |
+| 接口层 | 6 个接口串起来能否读计划→算影响→出方案→应用→撤销 | `python scripts\acceptance_w1.py --serve` |
+| 界面层 | 手机上看得见的影响面板、方案对比、通知、待办 | `android/` 安装后点「模拟下雨」 |
+
+接口巡检会自己起一个临时服务（默认 8011 端口），跑完自动关闭，不需要另开窗口；
+也可以先 `python -m uvicorn server.app:app --port 8000`，再
+`python scripts\acceptance_w1.py --base http://127.0.0.1:8000` 对着常驻服务跑。
 
 ## 四个验收用例
 
@@ -160,3 +177,4 @@ yingbian-core/
 ## 下一步
 
 W3：接和风天气、补错误处理与降级；W4：真机打包、崩溃兜底和演示脚本。
+
