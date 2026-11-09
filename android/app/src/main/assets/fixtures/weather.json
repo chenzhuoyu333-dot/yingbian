@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "data": {
+    "source": "和风天气（W3 待接入）",
+    "fetchedAt": "2026-11-14T17:02",
+    "next2hRainProb": 0.7,
+    "text": "15:00 起中雨"
+  }
+}

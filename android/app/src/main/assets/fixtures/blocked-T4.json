@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "data": {
+    "status": "blocked",
+    "schemes": [],
+    "blockedNode": "n_sunset",
+    "message": "「湖边日落点」是你锁定的，但会受影响。要解锁吗？"
+  }
+}

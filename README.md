@@ -1,7 +1,7 @@
-# 应变 · W1 施工图实现
+# 应变 · W1 算法 + W2 接口 / Android 客户端
 
 按 `W1施工图` 重写的 schema、四态传播、`shift/replace/drop` 修复，加上 `W2施工图` 的 6 个接口。
-Android 端可以先吃 `fixtures/` 里的 mock，不用等后端。
+Android 端在 `android/`，默认吃 `fixtures/` 里的 mock，不用等后端。
 
 ## 30 秒跑起来
 
@@ -33,6 +33,18 @@ python -m unittest discover -s tests -v
 ```
 
 当前 17 个测试：schema、T1–T4、6 个接口。
+
+## Android 客户端
+
+`android/` 是 Compose 单 Activity 客户端，已实现 W2 的 S1–S5：
+计划图、三方案对比、影响面板、通知预览、待办清单，以及空/加载/失败/阻断/离线状态。
+
+```powershell
+cd android
+.\gradlew.bat :app:assembleDebug
+```
+
+详细打开方式、真机联调和演示路径见 `android/README.md`。
 
 ## 数据模型
 
@@ -147,4 +159,4 @@ yingbian-core/
 
 ## 下一步
 
-W2 界面按 `W2施工图` 做 S1–S5 + 五态；Android 用 Kotlin + Compose，先吃 fixtures，再接 `uvicorn`。
+W3：接和风天气、补错误处理与降级；W4：真机打包、崩溃兜底和演示脚本。
