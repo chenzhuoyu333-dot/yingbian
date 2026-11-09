@@ -1,0 +1,88 @@
+{
+  "ok": true,
+  "data": {
+    "status": "ok",
+    "blockedNode": null,
+    "message": "",
+    "schemes": [
+      {
+        "schemeId": "A",
+        "label": "保时间",
+        "status": "ok",
+        "actions": [
+          {
+            "nodeId": "n_sunset",
+            "action": "replace",
+            "payload": {
+              "alternativeId": "a_museum"
+            },
+            "cost": 110.0,
+            "reason": "会淋雨，换成备选「市美术馆」"
+          },
+          {
+            "nodeId": "n_photo",
+            "action": "drop",
+            "payload": {},
+            "cost": 300,
+            "reason": "会淋雨，跳过这一站"
+          }
+        ],
+        "changedCount": 2,
+        "keepRate": 1.0,
+        "sacrifice": "放弃 1 个点、换 1 个备选"
+      },
+      {
+        "schemeId": "B",
+        "label": "保体验",
+        "status": "ok",
+        "actions": [
+          {
+            "nodeId": "n_sunset",
+            "action": "replace",
+            "payload": {
+              "alternativeId": "a_museum"
+            },
+            "cost": 60.0,
+            "reason": "会淋雨，换成备选「市美术馆」"
+          },
+          {
+            "nodeId": "n_photo",
+            "action": "drop",
+            "payload": {},
+            "cost": 300,
+            "reason": "会淋雨，跳过这一站"
+          }
+        ],
+        "changedCount": 2,
+        "keepRate": 1.0,
+        "sacrifice": "放弃 1 个点、换 1 个备选"
+      },
+      {
+        "schemeId": "C",
+        "label": "保少改动",
+        "status": "ok",
+        "actions": [
+          {
+            "nodeId": "n_sunset",
+            "action": "replace",
+            "payload": {
+              "alternativeId": "a_museum"
+            },
+            "cost": 70.0,
+            "reason": "会淋雨，换成备选「市美术馆」"
+          },
+          {
+            "nodeId": "n_photo",
+            "action": "drop",
+            "payload": {},
+            "cost": 300,
+            "reason": "会淋雨，跳过这一站"
+          }
+        ],
+        "changedCount": 2,
+        "keepRate": 1.0,
+        "sacrifice": "放弃 1 个点、换 1 个备选"
+      }
+    ]
+  }
+}

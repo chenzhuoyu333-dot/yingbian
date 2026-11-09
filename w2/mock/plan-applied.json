@@ -1,0 +1,290 @@
+{
+  "ok": true,
+  "data": {
+    "plan": {
+      "planId": "p_sat_guzhen",
+      "title": "周六古镇一日游",
+      "date": "2026-11-14",
+      "timezone": "+08:00",
+      "nodes": [
+        {
+          "id": "n_meet",
+          "type": "place",
+          "title": "校门口集合",
+          "start": "09:20",
+          "end": "09:30",
+          "indoor": false,
+          "confirmed": true,
+          "windowLatest": null,
+          "alternatives": [],
+          "source": {
+            "kind": "manual",
+            "note": "群里定的",
+            "at": "2026-11-02T20:10"
+          },
+          "confidence": "high"
+        },
+        {
+          "id": "n_buy",
+          "type": "task",
+          "title": "买水、取门票",
+          "start": "09:30",
+          "end": "09:40",
+          "indoor": false,
+          "confirmed": false,
+          "windowLatest": null,
+          "alternatives": [],
+          "source": {
+            "kind": "manual",
+            "note": "",
+            "at": "2026-11-02T20:12"
+          },
+          "confidence": "high"
+        },
+        {
+          "id": "n_transit_in",
+          "type": "transit",
+          "title": "校门 → 古镇（公交 40 分钟）",
+          "start": "09:40",
+          "end": "10:30",
+          "indoor": true,
+          "confirmed": false,
+          "windowLatest": null,
+          "alternatives": [],
+          "source": {
+            "kind": "api",
+            "note": "高德路径规划",
+            "at": "2026-11-02T20:20"
+          },
+          "confidence": "medium"
+        },
+        {
+          "id": "n_town",
+          "type": "place",
+          "title": "古镇老街",
+          "start": "10:30",
+          "end": "12:10",
+          "indoor": false,
+          "confirmed": true,
+          "windowLatest": null,
+          "alternatives": [],
+          "source": {
+            "kind": "consensus",
+            "note": "5 篇攻略都提到",
+            "at": "2026-11-01T19:00"
+          },
+          "confidence": "high"
+        },
+        {
+          "id": "n_lunch",
+          "type": "reservation",
+          "title": "山野小馆（已订位 4 人）",
+          "start": "12:30",
+          "end": "13:40",
+          "indoor": true,
+          "confirmed": true,
+          "windowLatest": "13:00",
+          "alternatives": [
+            {
+              "id": "a_food2",
+              "title": "江畔小厨",
+              "indoor": true,
+              "start": "12:30",
+              "end": "13:40",
+              "travelMin": 6
+            }
+          ],
+          "source": {
+            "kind": "manual",
+            "note": "订位短信截图",
+            "at": "2026-11-02T21:14"
+          },
+          "confidence": "high"
+        },
+        {
+          "id": "n_walk",
+          "type": "place",
+          "title": "河边步道",
+          "start": "13:40",
+          "end": "14:10",
+          "indoor": false,
+          "confirmed": false,
+          "windowLatest": null,
+          "alternatives": [],
+          "source": {
+            "kind": "ai",
+            "note": "AI 推荐：顺路、耗时短",
+            "at": "2026-11-02T21:30"
+          },
+          "confidence": "medium"
+        },
+        {
+          "id": "n_cafe",
+          "type": "place",
+          "title": "转角咖啡",
+          "start": "14:10",
+          "end": "15:00",
+          "indoor": true,
+          "confirmed": false,
+          "windowLatest": null,
+          "alternatives": [
+            {
+              "id": "a_tea",
+              "title": "老茶馆",
+              "indoor": true,
+              "start": "14:10",
+              "end": "15:00",
+              "travelMin": 4
+            }
+          ],
+          "source": {
+            "kind": "consensus",
+            "note": "3 人收藏",
+            "at": "2026-11-02T21:32"
+          },
+          "confidence": "high"
+        },
+        {
+          "id": "n_sunset",
+          "type": "place",
+          "title": "市美术馆",
+          "start": "15:30",
+          "end": "16:40",
+          "indoor": true,
+          "confirmed": false,
+          "windowLatest": "16:40",
+          "alternatives": [
+            {
+              "id": "a_museum",
+              "title": "市美术馆",
+              "indoor": true,
+              "start": "15:30",
+              "end": "16:40",
+              "travelMin": 20
+            }
+          ],
+          "source": {
+            "kind": "alternative",
+            "note": "换备选：市美术馆",
+            "at": "2026-11-02T21:35"
+          },
+          "confidence": "high"
+        },
+        {
+          "id": "n_transit_back",
+          "type": "transit",
+          "title": "古镇 → 市区（50 分钟）",
+          "start": "17:10",
+          "end": "18:00",
+          "indoor": true,
+          "confirmed": true,
+          "windowLatest": null,
+          "alternatives": [],
+          "source": {
+            "kind": "api",
+            "note": "高德路径规划",
+            "at": "2026-11-02T21:40"
+          },
+          "confidence": "medium"
+        },
+        {
+          "id": "n_dinner",
+          "type": "reservation",
+          "title": "火锅店（已订位 4 人）",
+          "start": "18:30",
+          "end": "19:40",
+          "indoor": true,
+          "confirmed": true,
+          "windowLatest": "19:00",
+          "alternatives": [],
+          "source": {
+            "kind": "manual",
+            "note": "订位截图",
+            "at": "2026-11-02T21:42"
+          },
+          "confidence": "high"
+        },
+        {
+          "id": "n_home",
+          "type": "transit",
+          "title": "回家",
+          "start": "19:40",
+          "end": "20:10",
+          "indoor": true,
+          "confirmed": false,
+          "windowLatest": null,
+          "alternatives": [],
+          "source": {
+            "kind": "manual",
+            "note": "",
+            "at": "2026-11-02T21:43"
+          },
+          "confidence": "high"
+        }
+      ],
+      "edges": [
+        {
+          "from": "n_meet",
+          "to": "n_buy",
+          "type": "precedes",
+          "minGapMin": 0
+        },
+        {
+          "from": "n_buy",
+          "to": "n_transit_in",
+          "type": "precedes",
+          "minGapMin": 0
+        },
+        {
+          "from": "n_transit_in",
+          "to": "n_town",
+          "type": "precedes",
+          "minGapMin": 0
+        },
+        {
+          "from": "n_town",
+          "to": "n_lunch",
+          "type": "precedes",
+          "minGapMin": 20
+        },
+        {
+          "from": "n_lunch",
+          "to": "n_walk",
+          "type": "precedes",
+          "minGapMin": 0
+        },
+        {
+          "from": "n_walk",
+          "to": "n_cafe",
+          "type": "precedes",
+          "minGapMin": 0
+        },
+        {
+          "from": "n_cafe",
+          "to": "n_sunset",
+          "type": "precedes",
+          "minGapMin": 30
+        },
+        {
+          "from": "n_transit_back",
+          "to": "n_dinner",
+          "type": "precedes",
+          "minGapMin": 30
+        },
+        {
+          "from": "n_dinner",
+          "to": "n_home",
+          "type": "precedes",
+          "minGapMin": 0
+        }
+      ],
+      "meta": {
+        "nodes": 12,
+        "confirmed": 5,
+        "note": "confirmed=true 等于锁定。windowLatest 表示最晚必须开始的时间。"
+      }
+    },
+    "version": 2,
+    "applied": 2
+  }
+}
