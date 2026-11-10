@@ -97,6 +97,12 @@ data class Weather(
     val fetchedAt: String,
     val rainProb: Double,
     val text: String,
+    /** 后端明确标注的"这是演示数据"，界面必须显示出来 */
+    val isDemo: Boolean = false,
+    /** 降雨概率是怎么来的（和风 pop / 高德文字估计），用于解释而非装饰 */
+    val basis: String = "",
+    /** isDemo 为真时，后端给的原因说明 */
+    val note: String = "",
 )
 
 fun parseMinutes(value: String): Int {
@@ -273,5 +279,8 @@ object PlanJson {
         fetchedAt = data.text("fetchedAt"),
         rainProb = data.optDouble("next2hRainProb", 0.0),
         text = data.text("text"),
+        isDemo = data.optBoolean("isDemo", false),
+        basis = data.optString("basis", ""),
+        note = data.optString("note", ""),
     )
 }

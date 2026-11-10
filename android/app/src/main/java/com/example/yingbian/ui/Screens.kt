@@ -97,9 +97,10 @@ private fun gapBetween(plan: Plan, from: PlanNode, to: PlanNode): Int =
 
 @Composable
 private fun WeatherCard(weather: Weather?) {
+    val demo = weather?.isDemo == true
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-        color = SoftBlue,
+        color = if (demo) Color(0xFFFFF8E1) else SoftBlue,
         shape = RoundedCornerShape(16.dp),
     ) {
         Row(
@@ -107,7 +108,18 @@ private fun WeatherCard(weather: Weather?) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("天气", fontSize = 11.sp, color = Muted)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("天气", fontSize = 11.sp, color = Muted)
+                    // 演示数据必须能一眼看出来，不能让假数据冒充真实预报
+                    if (demo) {
+                        Text(
+                            text = "  演示数据",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF8A5A00),
+                        )
+                    }
+                }
                 Text(
                     text = weather?.text ?: "天气加载中",
                     fontSize = 15.sp,
@@ -125,6 +137,16 @@ private fun WeatherCard(weather: Weather?) {
                     color = Muted,
                     modifier = Modifier.padding(top = 2.dp),
                 )
+                // 依据：这个概率是怎么算出来的（真实来源时显示 pop，估算时显示规则）
+                val basis = weather?.basis.orEmpty()
+                if (basis.isNotBlank()) {
+                    Text(
+                        text = "依据：$basis",
+                        fontSize = 9.sp,
+                        color = Muted,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
             }
             Text(
                 text = "${((weather?.rainProb ?: 0.0) * 100).toInt()}%",

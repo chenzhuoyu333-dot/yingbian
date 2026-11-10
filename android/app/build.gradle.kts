@@ -30,7 +30,13 @@ android {
         }
         create("lan") {
             dimension = "env"
-            val baseUrl = (project.findProperty("baseUrl") as String?) ?: "http://10.195.122.142:8000"
+            // 真实通道的默认后端地址，优先级从高到低：
+            //   1) 打包时 -PbaseUrl=http://x.x.x.x:8000
+            //   2) 这里的兜底值（当前开发机 IP）
+            //   3) App 内「连接设置」的运行时覆盖（prefs 优先于 BuildConfig）
+            //      → 演示当天 IP 变了，在设置里改一下即可，不用重新打包
+            // ⚠️ IP 会变，每次演示前用 ipconfig 确认 WLAN 的 IPv4 地址。
+            val baseUrl = (project.findProperty("baseUrl") as String?) ?: "http://10.195.151.83:8000"
             buildConfigField("String", "DEFAULT_BASE", "\"$baseUrl\"")
             buildConfigField("boolean", "DEFAULT_MOCK", "false")
         }
