@@ -31,7 +31,7 @@ Compose 单 Activity。内置两个构建变体：
 右上角齿轮 → 连接设置：
 
 1. 「离线演示」开关：打开用内置数据，关闭则连后端
-2. 服务器地址：模拟器填 `http://10.0.2.2:8000`；真机填 `http://电脑IP:8000`
+2. 服务器地址：真机填 `http://电脑IP:8000`；模拟器先试 `http://10.0.2.2:8000`，若「测试连接」超时，就改填电脑的局域网 IP
 3. 点「测试连接」：显示「通 · 周六古镇一日游（12 个节点）」即成功
 4. 点「保存并重载」生效，App 会立刻重新拉一次计划
 
@@ -74,22 +74,32 @@ adb reverse tcp:8000 tcp:8000
 
 ## 接真后端
 
-改 `data/PlanRepository.kt` 顶部的 `AppConfig`：
+不用改代码。右上角齿轮 → 连接设置：
 
-```kotlin
-const val USE_MOCK = false
-const val BASE_URL = "http://10.0.2.2:8000"   // 模拟器
+1. 关掉「离线演示」
+2. 填 `http://电脑IP:8000`，点「测试连接」
+3. 出现「通 · …」后点「保存并重载」
+
+LAN 包默认已经填好打包时的电脑 IP；改一次会存在手机里，重装前都有效。
+
+后端要监听 `0.0.0.0:8000`，并放行防火墙：
+
+```powershell
+python -m server.app
+netsh advfirewall firewall add rule name="yingbian-api-8000" dir=in action=allow protocol=TCP localport=8000
 ```
 
-真机 USB 调试时改成 `http://127.0.0.1:8000`，先在电脑执行：
+本机已经加过这条规则。USB 调试时也可以不填 IP：
 
 ```powershell
 adb reverse tcp:8000 tcp:8000
-python -m server.app
 ```
+
+地址填 `http://127.0.0.1:8000`，这样不依赖局域网和防火墙。
 
 ## 已知边界
 
-- 后端天气已接和风（`QWEATHER_KEY`），客户端目前仍读 mock；W3 剩余工作是把天气请求切到 `/api/weather`，界面上保留 `source` 和 `fetchedAt`
+- 天气：连后端时走 `/api/weather`（和风 → 高德 → 未配 Key 时明确标注“演示数据”）；离线包读内置 fixture
+- 计划生成目前是固定演示数据；AI 出草稿 + 引擎校验是下一步，不在 W1/W2 范围
 - `vote` / `global` 目前只显示路径标签，没有多人投票流程
 - 离线兜底使用 SharedPreferences 缓存上一次计划；假数据模式不会触发
