@@ -9,3 +9,7 @@ android/.idea/
 *.apk
 *.keystore
 android/dist/
+
+# 本地密钥，绝不提交
+.env
+.env.local

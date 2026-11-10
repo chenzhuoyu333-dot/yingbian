@@ -69,13 +69,13 @@ class ServerContractTest(unittest.TestCase):
 
     def test_weather_is_demo_without_key(self):
         import os
+        from unittest.mock import patch
 
-        old = os.environ.pop("QWEATHER_KEY", None)
-        try:
+        # 必须把三个 Key 全部显式清空：项目根目录的 .env 会把它们塞进 os.environ，
+        # 否则这个测试会真的去调高德，结果就不再是演示数据。
+        clean = {"QWEATHER_HOST": "", "QWEATHER_KEY": "", "AMAP_KEY": ""}
+        with patch.dict(os.environ, clean):
             body = self.client.get("/api/weather").json()
-        finally:
-            if old is not None:
-                os.environ["QWEATHER_KEY"] = old
         weather = body["data"]
         self.assertTrue(weather["isDemo"])
         self.assertIn("演示数据", weather["source"])
