@@ -179,14 +179,18 @@ def propagate(plan: Plan, event: Event | None = None) -> ImpactReport:
             dst = plan.find(edge.dst)
             if src is None or dst is None or src.dropped or dst.dropped:
                 continue
-            earliest = src.end + shifts[src.id] + edge.min_gap
-            needed = max(0, earliest - dst.start)
+            # 缓冲 = 这条边的天然余量（实际间隙 − 最小间隙）。
+            # 上游后移时先用缓冲吸收，吸不完的部分才顶到下游。
+            # 没有这一步，计划里留的缓冲等于白留 —— 任何延误都会顶穿整条链，
+            # 于是"最小修复"永远没得改，只可能 blocked。
+            slack = max(0, (dst.start - src.end) - edge.min_gap)
+            needed = max(0, shifts[src.id] - slack)
             if needed <= shifts[dst.id]:
                 continue
             shifts[dst.id] = needed
             new_start = dst.start + needed
             level = "at_risk"
-            reason = f"上游 {src.id} 后移，最早 {format_time(earliest)} 才能开始"
+            reason = f"上游 {src.id} 后移超出缓冲（余量 {slack} 分），本节点后移 {needed} 分"
             if dst.window_latest is not None and new_start > dst.window_latest:
                 level = "invalid"
                 reason = f"新开始 {format_time(new_start)} 晚于最晚 {format_time(dst.window_latest)}"

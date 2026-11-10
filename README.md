@@ -189,25 +189,101 @@ fixtures/weather.json           # 标注 isDemo 的演示天气
 
 要改回原文，只改 `propagate.py` 的 `_direct_hit` 和 fixture 的 `windowLatest`，T4 阻断不受影响。
 
+## W3：能演（缓冲 / 天气 / 自检 / 性能）
+
+### 1. 两份演示计划
+
+```
+data/plan-saturday.json    p_sat_guzhen        零缓冲：用来证明"一延误就全崩"
+data/plan-slack.json       p_sat_guzhen_slack  有缓冲：用来演示"缓冲吸收延误"
+```
+
+启动时自动加载 `data/plan-*.json`，用 `planId` 路径参数选择。
+两者节点 id 相同，App 只需换 base 里的计划 id。
+
+**为什么需要两份**：零缓冲的计划里，任何延误都会顶穿整条链，导致
+最小修复永远没得选、三个方案算出同一个结果 —— 屏 2 演出来会被问"这不是重复吗"。
+
+### 2. 缓冲现在真的会吸收延误
+
+`propagate.py` 的边传播改成先吃缓冲：
+
+```python
+slack  = max(0, (dst.start - src.end) - edge.min_gap)   # 这条边的天然余量
+needed = max(0, shifts[src] - slack)                     # 吸不完的部分才顶到下游
+```
+
+实测对比（集合晚 30 分钟）：
+
+| 计划 | 影响 | path |
+|---|---|---|
+| 零缓冲 `p_sat_guzhen` | 12/12 | global |
+| 宽松版 `p_sat_guzhen_slack` | 3/12 | local |
+
+### 3. 天气：和风 → 高德 → 演示数据
+
+```powershell
+# 项目根目录建 .env（已被 .gitignore 排除，永不提交）
+AMAP_KEY=你的高德Web服务Key
+QWEATHER_HOST=xxxxxxxx.re.qweatherapi.com   # 可选，和风专属域名
+QWEATHER_KEY=你的和风Key
+```
+
+- 和风有逐小时降水概率 `pop`，最准；但**必须用账号专属 Host**，公共域名 `devapi.qweather.com` 已停用（老 Key 会 403）
+- 高德不需要专属域名，但没有概率，只有天气文字 → 按文字保守估计，依据写进 `basis`
+- 都拿不到 → `source: "演示数据（原因）"`、`isDemo: true`、`note` 说明原因，**绝不伪装**
+
+`GET /api/config` 可以查配置状态（只报布尔值，不返回密钥）。
+
+### 4. 两条命令收口 W3
+
+```powershell
+python scripts/w3_check.py --base http://127.0.0.1:8000   # 27 项后端自检
+python scripts/bench.py                                   # 性能表，直接贴文档
+```
+
+`w3_check.py` 覆盖：服务可用、两份计划、全链路（取/事件/方案/应用/撤销）、
+锁定冲突必须 blocked、天气真伪与标注、缓冲是否生效。
+
+`bench.py` 实测（12 节点，100 次）：
+
+| 场景 | 影响 | 传播 P50 | 修复 P95 |
+|---|---|---|---|
+| 降雨 15:00–17:00 | 2/12 | 0.02 ms | 0.87 ms |
+| 集合晚 60 分钟 | 12/12 | 0.04 ms | 0.39 ms |
+| 午餐取消 | 1/12 | 0.02 ms | 0.75 ms |
+
+一次完整演示约 18 次请求。
+
+### 5. App 侧还差什么
+
+后端已就绪。App 侧的 W3 事项：**真机连一次真实后端 → 录 90 秒 → 彩排**。
+五态（空/加载/失败/阻断/离线）和离线缓存已在 Compose 客户端里实现。
+
 ## 目录
 
 ```
 yingbian-core/
-├─ data/plan-saturday.json        唯一行程数据
+├─ data/
+│  ├─ plan-saturday.json          标准计划（零缓冲）
+│  └─ plan-slack.json             宽松版（有缓冲，演示用）
 ├─ fixtures/                      Android 离线 mock
 ├─ yingbian/
 │  ├─ models.py                   schema 与时间工具
+│  ├─ env.py                      .env 读取（不覆盖已有环境变量）
 │  ├─ rules.py                    阈值与三套方案权重
-│  ├─ propagate.py                四态传播
+│  ├─ propagate.py                四态传播（含缓冲吸收）
 │  ├─ repair.py                   最小修复
-│  ├─ weather.py                  和风天气适配（演示/真实/降级）
+│  ├─ weather.py                  和风 → 高德 → 演示数据 三级链
 │  ├─ notify.py                   通知文案
 │  └─ cli.py                      python -m yingbian ...
-├─ server/app.py                  六接口 + 自测页 + reset
+├─ server/app.py                  六接口 + 自测页 + 多计划加载
 ├─ scripts/
 │  ├─ make_fixtures.py            从算法重新生成 fixtures
-│  └─ acceptance_w1.py            W1 接口巡检
-├─ tests/                         23 个 unittest
+│  ├─ acceptance_w1.py            W1 接口巡检
+│  ├─ w3_check.py                 W3 收口自检（27 项）
+│  └─ bench.py                    性能基准
+├─ tests/                         27 个 unittest
 ├─ android/                       Compose 客户端
 ├─ archive/w2-reference/          组员独立参考实现（不参与构建）
 ├─ check-W1.bat                   双击验收
@@ -216,5 +292,6 @@ yingbian-core/
 
 ## 下一步
 
-W3 剩余：Android 端改成调真实天气接口（后端已就绪）；W4：真机打包、崩溃兜底和演示脚本。
+W3 剩余（全部是 App 侧）：真机连一次真实后端 → 五态走查 → 录 90 秒视频 → 彩排。
+W4：性能表定稿、原型图、分工表、匿名自查、打包交件。
 

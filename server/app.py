@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import socket
+from pathlib import Path
 from typing import Any
 
 from fastapi import Body, FastAPI, Query
@@ -29,8 +30,25 @@ app.add_middleware(
 )
 
 BASE = load_plan()
-PLANS: dict[str, Any] = {BASE.plan_id: BASE.clone()}
-VERSIONS: dict[str, list[Any]] = {BASE.plan_id: [BASE.clone()]}
+
+# 同时加载 data/plan-*.json：标准版（零缓冲，用于说明"一延误就全崩"）
+# 和宽松版（有缓冲，用于演示"缓冲吸收延误"与三个方案分化）。
+# 计划 id 以文件里的 planId 为准，前端通过 plan_id 路径参数选择。
+PLANS: dict[str, Any] = {}
+VERSIONS: dict[str, list[Any]] = {}
+for _f in sorted((Path(__file__).resolve().parent.parent / "data").glob("plan-*.json")):
+    try:
+        _p = load_plan(_f)
+    except Exception as _exc:  # 单个文件坏了不影响启动
+        print(f"[warn] 跳过 {_f.name}: {_exc}")
+        continue
+    PLANS[_p.plan_id] = _p.clone()
+    VERSIONS[_p.plan_id] = [_p.clone()]
+    print(f"[plan] 已加载 {_p.plan_id:<24} {_f.name}  {len(_p.nodes)} 节点")
+
+if BASE.plan_id not in PLANS:
+    PLANS[BASE.plan_id] = BASE.clone()
+    VERSIONS[BASE.plan_id] = [BASE.clone()]
 
 
 INDEX_HTML = """<!doctype html>
@@ -107,9 +125,13 @@ def index():
 
 @app.post("/api/reset")
 def reset():
-    PLANS[BASE.plan_id] = BASE.clone()
-    VERSIONS[BASE.plan_id] = [BASE.clone()]
-    return _ok({"reset": True, "version": 1})
+    for _pid in list(PLANS.keys()):
+        _orig = PLANS[_pid]
+        # 用版本栈最底部那版做原始快照
+        _base = VERSIONS[_pid][0].clone()
+        PLANS[_pid] = _base.clone()
+        VERSIONS[_pid] = [_base.clone()]
+    return _ok({"reset": True, "plans": list(PLANS.keys())})
 
 
 @app.get("/api/plan/{plan_id}")

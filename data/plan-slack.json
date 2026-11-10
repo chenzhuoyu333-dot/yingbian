@@ -1,0 +1,115 @@
+{
+  "planId": "p_sat_guzhen_slack",
+  "title": "周六古镇一日游（宽松版 · 有缓冲）",
+  "date": "2026-11-14",
+  "_note": "演示专用计划。和 plan-saturday.json 的区别只有一个：每条衔接处留了 10 分钟缓冲。零缓冲的计划里，任何延误都会顶穿整条链，导致最小修复永远没得选、三个方案算出同一个结果；有缓冲才能演出“缓冲吸收延误”和“三个方案各自牺牲什么”。",
+  "nodes": [
+    {
+      "id": "n_meet", "type": "place", "title": "南门地铁站集合",
+      "start": "09:20", "end": "09:50", "indoor": true,
+      "confirmed": true, "windowLatest": null, "alternatives": [],
+      "source": {"kind": "manual", "note": "队长定的集合点", "at": "2026-11-13"},
+      "confidence": "high", "place": "南门地铁站 A 口"
+    },
+    {
+      "id": "n_transit_go", "type": "transit", "title": "地铁 + 公交去古镇",
+      "start": "10:20", "end": "10:50", "indoor": true,
+      "confirmed": false, "windowLatest": null, "alternatives": [],
+      "source": {"kind": "api", "note": "高德 ETA 30 分钟", "at": "2026-11-13"},
+      "confidence": "high", "place": "地铁 2 号线 → 古镇专线"
+    },
+    {
+      "id": "n_town", "type": "place", "title": "古镇老街漫步",
+      "start": "11:00", "end": "12:10", "indoor": false,
+      "confirmed": true, "windowLatest": null, "alternatives": [],
+      "source": {"kind": "consensus", "note": "5 篇攻略都提到", "at": "2026-11-13"},
+      "confidence": "high", "place": "古镇老街"
+    },
+    {
+      "id": "n_lunch", "type": "reservation", "title": "午餐 · 河边餐厅",
+      "start": "12:40", "end": "13:40", "indoor": true,
+      "confirmed": true, "windowLatest": "13:20",
+      "alternatives": [
+        {"id": "a_jiangpan", "title": "江畔小厨", "indoor": true,
+         "start": "12:40", "end": "13:40", "travelMin": 10,
+         "place": "江畔小厨", "sacrifice": "换一家餐厅", "contact": "0580-2222333"}
+      ],
+      "source": {"kind": "manual", "note": "提前订位", "at": "2026-11-12"},
+      "confidence": "high", "place": "河边餐厅", "contact": "0580-1234567"
+    },
+    {
+      "id": "n_tea", "type": "place", "title": "茶馆休息",
+      "start": "14:00", "end": "14:30", "indoor": true,
+      "confirmed": false, "windowLatest": null, "alternatives": [],
+      "source": {"kind": "consensus", "note": "本地人推荐", "at": "2026-11-13"},
+      "confidence": "medium", "place": "老宅茶馆"
+    },
+    {
+      "id": "n_river", "type": "place", "title": "河边散步",
+      "start": "14:50", "end": "15:30", "indoor": false,
+      "confirmed": false, "windowLatest": null, "alternatives": [],
+      "source": {"kind": "manual", "note": "顺路", "at": "2026-11-13"},
+      "confidence": "medium", "place": "河畔步道"
+    },
+    {
+      "id": "n_sunset", "type": "place", "title": "湖边日落点",
+      "start": "16:10", "end": "17:20", "indoor": false,
+      "confirmed": false, "windowLatest": "16:40",
+      "alternatives": [
+        {"id": "a_museum", "title": "市美术馆", "indoor": true,
+         "start": "16:10", "end": "17:20", "travelMin": 20,
+         "place": "市美术馆", "sacrifice": "看不到日落"}
+      ],
+      "source": {"kind": "consensus", "note": "3 篇攻略推荐", "at": "2026-11-13"},
+      "confidence": "high", "place": "西岸观景台"
+    },
+    {
+      "id": "n_photo", "type": "place", "title": "湖边拍照",
+      "start": "17:30", "end": "17:50", "indoor": false,
+      "confirmed": false, "windowLatest": "17:40", "alternatives": [],
+      "source": {"kind": "manual", "note": "同行人要求", "at": "2026-11-13"},
+      "confidence": "low", "place": "西岸观景台"
+    },
+    {
+      "id": "n_transit_back", "type": "transit", "title": "返程",
+      "start": "18:10", "end": "18:40", "indoor": true,
+      "confirmed": true, "windowLatest": null, "alternatives": [],
+      "source": {"kind": "api", "note": "末班车前留 60 分钟", "at": "2026-11-13"},
+      "confidence": "high", "place": "古镇客运站"
+    },
+    {
+      "id": "n_hotpot", "type": "reservation", "title": "晚餐 · 老城火锅",
+      "start": "19:40", "end": "20:40", "indoor": true,
+      "confirmed": true, "windowLatest": "20:20", "alternatives": [],
+      "source": {"kind": "manual", "note": "提前订位", "at": "2026-11-12"},
+      "confidence": "high", "place": "老城火锅", "contact": "0580-7654321"
+    },
+    {
+      "id": "n_market", "type": "place", "title": "夜市逛逛",
+      "start": "21:00", "end": "21:30", "indoor": false,
+      "confirmed": false, "windowLatest": null, "alternatives": [],
+      "source": {"kind": "ai", "note": "AI 推荐：周六夜市", "at": "2026-11-13"},
+      "confidence": "low", "place": "老城夜市"
+    },
+    {
+      "id": "n_hotel", "type": "transit", "title": "回酒店",
+      "start": "21:45", "end": "22:15", "indoor": true,
+      "confirmed": false, "windowLatest": null, "alternatives": [],
+      "source": {"kind": "manual", "note": "", "at": "2026-11-13"},
+      "confidence": "high", "place": "老城酒店"
+    }
+  ],
+  "edges": [
+    {"from": "n_meet", "to": "n_transit_go", "type": "precedes", "minGapMin": 20},
+    {"from": "n_transit_go", "to": "n_town", "type": "precedes", "minGapMin": 0},
+    {"from": "n_town", "to": "n_lunch", "type": "requires", "minGapMin": 20},
+    {"from": "n_lunch", "to": "n_tea", "type": "precedes", "minGapMin": 10},
+    {"from": "n_tea", "to": "n_river", "type": "precedes", "minGapMin": 10},
+    {"from": "n_river", "to": "n_sunset", "type": "precedes", "minGapMin": 30},
+    {"from": "n_sunset", "to": "n_photo", "type": "precedes", "minGapMin": 0},
+    {"from": "n_photo", "to": "n_transit_back", "type": "precedes", "minGapMin": 10},
+    {"from": "n_transit_back", "to": "n_hotpot", "type": "precedes", "minGapMin": 50},
+    {"from": "n_hotpot", "to": "n_market", "type": "precedes", "minGapMin": 10},
+    {"from": "n_market", "to": "n_hotel", "type": "precedes", "minGapMin": 10}
+  ]
+}
