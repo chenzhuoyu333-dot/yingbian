@@ -2,7 +2,8 @@
 
 按 `W1施工图` 实现的 schema、四态传播、`shift/replace/drop` 修复，加上 `W2施工图` 的 6 个接口。
 天气已接和风（`QWEATHER_KEY`，没配就返回明确标注的演示数据）。
-Android 端在 `android/`，默认吃 `fixtures/` 里的 mock，不用等后端。
+Android 端在 `android/`，分 emulator（离线 mock）和 lan（连后端）两个包；
+地址可在 App 的「连接设置」里改并测试连接，不用为换 IP 重新打包。
 
 **唯一数据源是 `data/plan-saturday.json`**；`archive/w2-reference/` 是组员的独立参考实现，
 数据与主实现不同，不参与构建、测试和演示，详见 `archive/README.md`。
@@ -62,10 +63,11 @@ python -m unittest discover -s tests -v
 
 ```powershell
 cd android
-.\gradlew.bat :app:assembleDebug
+.\make-apks.ps1
+# 产物：dist/yingbian-emulator.apk（离线演示）、dist/yingbian-lan.apk（真机联调）
 ```
 
-详细打开方式、真机联调和演示路径见 `android/README.md`。
+`make-apks.ps1` 打包时会把本机局域网 IP 写进 LAN 包的默认地址；详细打开方式、设置页用法和演示路径见 `android/README.md`。
 
 ## 数据模型
 

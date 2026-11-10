@@ -19,6 +19,23 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Two demo packages: emulator (offline mock) and LAN (talks to the PC backend).
+    // Override the LAN address at build time: -PbaseUrl=http://192.168.1.23:8000
+    flavorDimensions += "env"
+    productFlavors {
+        create("emulator") {
+            dimension = "env"
+            buildConfigField("String", "DEFAULT_BASE", "\"http://10.0.2.2:8000\"")
+            buildConfigField("boolean", "DEFAULT_MOCK", "true")
+        }
+        create("lan") {
+            dimension = "env"
+            val baseUrl = (project.findProperty("baseUrl") as String?) ?: "http://10.195.122.142:8000"
+            buildConfigField("String", "DEFAULT_BASE", "\"$baseUrl\"")
+            buildConfigField("boolean", "DEFAULT_MOCK", "false")
+        }
+    }
+
     buildTypes {
         release {
             optimization {
@@ -33,6 +50,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

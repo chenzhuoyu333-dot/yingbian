@@ -31,6 +31,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -40,6 +41,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.example.yingbian.data.ApiConfig
+import com.example.yingbian.data.ApiSettings
 import com.example.yingbian.data.createRepository
 import kotlinx.coroutines.launch
 
@@ -47,11 +50,14 @@ import kotlinx.coroutines.launch
 @Composable
 fun YingBianRoot() {
     val context = LocalContext.current
-    val controller = remember { PlanController(createRepository(context)) }
+    val settings = remember { ApiSettings(context) }
+    var repoVersion by remember { mutableIntStateOf(0) }
+    val controller = remember(repoVersion) { PlanController(createRepository(context, settings)) }
     val scope = rememberCoroutineScope()
     var debugOpen by remember { mutableStateOf(false) }
+    var settingsOpen by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) { controller.load() }
+    LaunchedEffect(repoVersion) { controller.load() }
 
     BackHandler(enabled = controller.screen != AppScreen.Plan) {
         controller.openScreen(AppScreen.Plan)
@@ -85,8 +91,8 @@ fun YingBianRoot() {
                             Text("撤销", fontSize = 13.sp)
                         }
                     }
-                    IconButton(onClick = { debugOpen = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "调试")
+                    IconButton(onClick = { settingsOpen = true }) {
+                        Icon(Icons.Default.Settings, contentDescription = "设置")
                     }
                 },
             )
@@ -182,6 +188,30 @@ fun YingBianRoot() {
             message = message,
             onUnlock = { scope.launch { controller.unlockAndRepair() } },
             onKeep = { controller.dismissBlocked() },
+        )
+    }
+
+    if (settingsOpen) {
+        SettingsDialog(
+            initialBase = settings.baseUrl,
+            initialMock = settings.useMock,
+            defaultBase = ApiConfig.defaultBase,
+            defaultMock = ApiConfig.defaultMock,
+            onSave = { base, mock ->
+                if (!mock && base.isBlank()) {
+                    Toast.makeText(context, "请先填写服务器地址", Toast.LENGTH_SHORT).show()
+                } else {
+                    settings.baseUrl = base
+                    settings.useMock = mock
+                    settingsOpen = false
+                    repoVersion += 1
+                }
+            },
+            onDebug = {
+                settingsOpen = false
+                debugOpen = true
+            },
+            onDismiss = { settingsOpen = false },
         )
     }
 

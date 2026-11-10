@@ -20,3 +20,7 @@ build/
 *.log
 screen-*.png
 ui.xml
+dist/
+*.apk
+*.keystore
+captures/

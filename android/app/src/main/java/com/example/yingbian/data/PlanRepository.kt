@@ -10,14 +10,6 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
-object AppConfig {
-    // 演示默认用本地假数据，不依赖电脑上的服务端。
-    const val USE_MOCK = true
-
-    // 模拟器用 10.0.2.2；真机 USB 调试时改成 http://127.0.0.1:8000 并执行 adb reverse tcp:8000 tcp:8000
-    const val BASE_URL = "http://10.0.2.2:8000"
-}
-
 interface PlanRepository {
     suspend fun loadPlan(): Plan
     suspend fun sendEvent(scenario: DemoScenario = DemoScenario.RAIN): Impact
@@ -33,8 +25,11 @@ interface PlanRepository {
 enum class DemoScenario { RAIN, CANCEL_LUNCH }
 
 fun createRepository(context: Context): PlanRepository =
-    if (AppConfig.USE_MOCK) MockPlanRepository(context.applicationContext)
-    else RemotePlanRepository(context.applicationContext)
+    createRepository(context, ApiSettings(context))
+
+fun createRepository(context: Context, settings: ApiSettings): PlanRepository =
+    if (settings.useMock) MockPlanRepository(context.applicationContext)
+    else RemotePlanRepository(context.applicationContext, settings)
 
 class MockPlanRepository(private val context: Context) : PlanRepository {
     private var current: Plan? = null
@@ -112,7 +107,10 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
     override fun cachedPlan(): Plan? = current
 }
 
-class RemotePlanRepository(private val context: Context) : PlanRepository {
+class RemotePlanRepository(
+    private val context: Context,
+    private val settings: ApiSettings,
+) : PlanRepository {
     private val prefs = context.getSharedPreferences("yingbian_cache", Context.MODE_PRIVATE)
     private val planId = "p_sat_guzhen"
 
@@ -134,7 +132,7 @@ class RemotePlanRepository(private val context: Context) : PlanRepository {
         path: String,
         body: JSONObject? = null,
     ): JSONObject = withContext(Dispatchers.IO) {
-        val connection = URL(AppConfig.BASE_URL.trimEnd('/') + path).openConnection() as HttpURLConnection
+        val connection = URL(settings.baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection
         try {
             connection.requestMethod = method
             connection.connectTimeout = 4_000
