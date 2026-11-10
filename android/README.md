@@ -58,11 +58,11 @@ const val BASE_URL = "http://10.0.2.2:8000"   // 模拟器
 
 ```powershell
 adb reverse tcp:8000 tcp:8000
-python -m uvicorn server.app:app --host 0.0.0.0 --port 8000
+python -m server.app
 ```
 
 ## 已知边界
 
-- 天气仍是占位数据，W3 接和风天气；界面上保留 `source` 和 `fetchedAt`
+- 后端天气已接和风（`QWEATHER_KEY`），客户端目前仍读 mock；W3 剩余工作是把天气请求切到 `/api/weather`，界面上保留 `source` 和 `fetchedAt`
 - `vote` / `global` 目前只显示路径标签，没有多人投票流程
 - 离线兜底使用 SharedPreferences 缓存上一次计划；假数据模式不会触发

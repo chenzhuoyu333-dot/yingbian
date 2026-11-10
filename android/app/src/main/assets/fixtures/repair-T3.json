@@ -22,7 +22,7 @@
         "sacrifice": "放弃午餐 · 河边餐厅",
         "blockedNode": null,
         "message": "",
-        "elapsedMs": 0.4
+        "elapsedMs": 0
       },
       {
         "status": "ok",
@@ -47,7 +47,7 @@
         "sacrifice": "换一家餐厅",
         "blockedNode": null,
         "message": "",
-        "elapsedMs": 0.3
+        "elapsedMs": 0
       },
       {
         "status": "ok",
@@ -72,7 +72,7 @@
         "sacrifice": "换一家餐厅",
         "blockedNode": null,
         "message": "",
-        "elapsedMs": 0.3
+        "elapsedMs": 0
       }
     ],
     "blockedNode": null,

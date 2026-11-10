@@ -12,22 +12,7 @@ from typing import Any
 
 from .models import Alternative, Node, Plan, format_time
 from .propagate import Event, ImpactReport, propagate
-
-
-@dataclass(frozen=True)
-class Scheme:
-    key: str
-    label: str
-    w_shift: float
-    w_replace: float
-    w_drop: float
-
-
-SCHEMES: dict[str, Scheme] = {
-    "A": Scheme("A", "保时间", w_shift=0.2, w_replace=100, w_drop=100),
-    "B": Scheme("B", "保体验", w_shift=1, w_replace=50, w_drop=100),
-    "C": Scheme("C", "保少改动", w_shift=3, w_replace=60, w_drop=200),
-}
+from .rules import MAX_REPAIR_ROUNDS, SCHEMES, Scheme
 
 
 @dataclass
@@ -118,6 +103,22 @@ def _keep_rate(original: Plan, working: Plan) -> float:
     return preserved / len(locked)
 
 
+def _survives(
+    working: Plan,
+    node: Node,
+    action: Action,
+    alt: Alternative | None,
+    event: Event,
+) -> bool:
+    """Trial-run one candidate; reject anything that would create a new conflict."""
+    trial = working.clone()
+    target = trial.find(node.id)
+    if target is None:
+        return False
+    _apply_action(target, action, alt)
+    return not propagate(trial, event).blocked
+
+
 def _blocked(plan: Plan, report: ImpactReport, scheme: Scheme, started: float) -> RepairResult:
     node = report.blocked_node(plan)
     message = ""
@@ -137,7 +138,12 @@ def _blocked(plan: Plan, report: ImpactReport, scheme: Scheme, started: float) -
     )
 
 
-def repair(plan: Plan, event: Event, scheme_key: str = "B", max_rounds: int = 3) -> RepairResult:
+def repair(
+    plan: Plan,
+    event: Event,
+    scheme_key: str = "B",
+    max_rounds: int = MAX_REPAIR_ROUNDS,
+) -> RepairResult:
     scheme = SCHEMES[scheme_key]
     started = time.perf_counter()
     working = plan.clone()
@@ -226,7 +232,26 @@ def repair(plan: Plan, event: Event, scheme_key: str = "B", max_rounds: int = 3)
             if not candidates:
                 return _blocked(plan, report, scheme, started)
 
-            _, _, action, alt = min(candidates, key=lambda item: (item[0], item[1]))
+            usable = [
+                item
+                for item in candidates
+                if _survives(working, node, item[2], item[3], event)
+            ]
+            if not usable:
+                return RepairResult(
+                    status="blocked",
+                    scheme=scheme.key,
+                    label=scheme.label,
+                    actions=[],
+                    blocked_node=node.id,
+                    message=f"「{node.title}」没有不会牵连其他节点的改法，需要你来决定。",
+                    keep_rate=1.0,
+                    changed_count=0,
+                    plan=plan.clone(),
+                    elapsed_ms=(time.perf_counter() - started) * 1000,
+                )
+
+            _, _, action, alt = min(usable, key=lambda item: (item[0], item[1]))
             _apply_action(node, action, alt)
             actions.append(action)
             progressed = True

@@ -6,16 +6,18 @@ Run:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+import os
+import socket
 from typing import Any
 
 from fastapi import Body, FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from yingbian import Event, load_plan, propagate, repair
 from yingbian.models import PlanError
 from yingbian.repair import apply_actions
+from yingbian.weather import fetch_weather
 
 
 app = FastAPI(title="应变 API", version="0.2.0")
@@ -29,6 +31,50 @@ app.add_middleware(
 BASE = load_plan()
 PLANS: dict[str, Any] = {BASE.plan_id: BASE.clone()}
 VERSIONS: dict[str, list[Any]] = {BASE.plan_id: [BASE.clone()]}
+
+
+INDEX_HTML = """<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><title>应变 · 接口自测</title>
+<style>
+body{font-family:-apple-system,"Segoe UI",sans-serif;max-width:860px;margin:32px auto;padding:0 16px;color:#222}
+h1{font-size:20px}button{margin:4px 6px 4px 0;padding:8px 14px;border:1px solid #1565C0;background:#fff;color:#1565C0;border-radius:8px;cursor:pointer}
+button:hover{background:#1565C0;color:#fff}
+pre{background:#f5f5f5;padding:14px;border-radius:8px;overflow:auto;max-height:520px;font-size:12px;line-height:1.5}
+.muted{color:#888;font-size:13px}
+</style></head><body>
+<h1>应变 · 接口自测</h1>
+<p class="muted">点按钮看返回，字段和手机端一致。</p>
+<div>
+  <button onclick="go('GET','/api/plan/__PLAN__')">1 取计划</button>
+  <button onclick="go('POST','/api/plan/__PLAN__/event',{type:'rain',from:'15:00',to:'17:00',prob:0.7})">2 下雨 → 影响</button>
+  <button onclick="go('POST','/api/plan/__PLAN__/repair',{event:{type:'rain',from:'15:00',to:'17:00',prob:0.7}})">
+3 求三方案</button>
+  <button onclick="go('POST','/api/plan/__PLAN__/event',{type:'cancel',nodeId:'n_lunch'})">4 餐厅取消</button>
+  <button onclick="applyB()">5 应用方案 B</button>
+  <button onclick="go('POST','/api/plan/__PLAN__/undo',{})">6 撤销</button>
+  <button onclick="go('GET','/api/weather?lat=30.27&lng=120.15')">7 天气</button>
+  <button onclick="go('POST','/api/reset',{})">8 重置</button>
+</div>
+<pre id="out">点上面任意按钮</pre>
+<script>
+const PLAN = "__PLAN__";
+async function call(method, path, body){
+  const res = await fetch(path, {method: method, headers: {'Content-Type': 'application/json'},
+    body: body ? JSON.stringify(body) : undefined});
+  return {status: res.status, data: await res.json()};
+}
+async function go(method, path, body){
+  const out = await call(method, path, body);
+  document.getElementById('out').textContent = out.status + "\\n" + JSON.stringify(out.data, null, 2);
+}
+async function applyB(){
+  const rep = await call('POST', '/api/plan/' + PLAN + '/repair',
+    {event: {type: 'rain', from: '15:00', to: '17:00', prob: 0.7}});
+  const schemes = (rep.data.data && rep.data.data.schemes) || [];
+  const pick = schemes.find(function(s){ return s.id === 'B'; }) || schemes[0] || {actions: []};
+  await go('POST', '/api/plan/' + PLAN + '/apply', {actions: pick.actions});
+}
+</script></body></html>"""
 
 
 def _ok(data: Any) -> dict[str, Any]:
@@ -52,6 +98,18 @@ def _error(code: str, message: str, status: int = 400) -> JSONResponse:
 @app.exception_handler(PlanError)
 async def plan_error_handler(_, exc: PlanError):
     return _error("PLAN_INVALID", str(exc))
+
+
+@app.get("/", response_class=HTMLResponse)
+def index():
+    return INDEX_HTML.replace("__PLAN__", BASE.plan_id)
+
+
+@app.post("/api/reset")
+def reset():
+    PLANS[BASE.plan_id] = BASE.clone()
+    VERSIONS[BASE.plan_id] = [BASE.clone()]
+    return _ok({"reset": True, "version": 1})
 
 
 @app.get("/api/plan/{plan_id}")
@@ -126,16 +184,7 @@ def post_undo(plan_id: str):
 
 @app.get("/api/weather")
 def get_weather(lat: float | None = Query(default=None), lng: float | None = Query(default=None)):
-    # W3 will replace this with a real 和风天气 call. Keep source/fetchedAt visible.
-    now = datetime.now(timezone(timedelta(hours=8))).isoformat(timespec="minutes")
-    return _ok({
-        "source": "和风天气（W3 待接入）",
-        "fetchedAt": now,
-        "next2hRainProb": 0.7,
-        "text": "15:00 起中雨",
-        "lat": lat,
-        "lng": lng,
-    })
+    return _ok(fetch_weather(lat, lng))
 
 
 @app.post("/api/debug/lock")
@@ -149,3 +198,41 @@ def debug_lock(body: dict = Body(...)):
         return _error("NOT_FOUND", "节点不存在", 404)
     node.confirmed = bool(body.get("confirmed", True))
     return _ok({"plan": plan.to_dict(), "version": plan.version})
+
+
+def _lan_ip() -> str:
+    try:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        probe.connect(("8.8.8.8", 80))
+        ip = probe.getsockname()[0]
+        probe.close()
+        return ip
+    except OSError:
+        return "127.0.0.1"
+
+
+def main() -> None:
+    import uvicorn
+
+    port = int(os.environ.get("PORT", "8000"))
+    host = os.environ.get("HOST", "0.0.0.0")
+    print("")
+    print("=" * 52)
+    print("应变 · 接口服务已启动")
+    print("=" * 52)
+    print(f"本机：    http://127.0.0.1:{port}")
+    print(f"自测页：  http://127.0.0.1:{port}/")
+    print(f"局域网：  http://{_lan_ip()}:{port}   <- 手机用这个")
+    print(f"计划 ID： {BASE.plan_id}")
+    print(
+        "天气：    "
+        + ("已配置 QWEATHER_KEY，使用真实数据" if os.environ.get("QWEATHER_KEY") else "未配置 Key，返回演示数据（会明确标注）")
+    )
+    print("按 Ctrl+C 停止")
+    print("=" * 52)
+    print("")
+    uvicorn.run(app, host=host, port=port)
+
+
+if __name__ == "__main__":
+    main()

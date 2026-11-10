@@ -1,0 +1,81 @@
+{
+  "ok": true,
+  "data": {
+    "status": "ok",
+    "schemes": [
+      {
+        "status": "ok",
+        "id": "A",
+        "label": "保时间",
+        "keepRate": 0.8,
+        "changedCount": 1,
+        "actions": [
+          {
+            "nodeId": "n_lunch",
+            "action": "drop",
+            "payload": {},
+            "reason": "备选代价更高，选择放弃",
+            "cost": 100,
+            "sacrifice": "放弃午餐 · 河边餐厅"
+          }
+        ],
+        "sacrifice": "放弃午餐 · 河边餐厅",
+        "blockedNode": null,
+        "message": "",
+        "elapsedMs": 0
+      },
+      {
+        "status": "ok",
+        "id": "B",
+        "label": "保体验",
+        "keepRate": 1.0,
+        "changedCount": 1,
+        "actions": [
+          {
+            "nodeId": "n_lunch",
+            "action": "replace",
+            "payload": {
+              "alternativeId": "a_jiangpan",
+              "fromTitle": "午餐 · 河边餐厅",
+              "toTitle": "江畔小厨"
+            },
+            "reason": "改去「江畔小厨」",
+            "cost": 55.0,
+            "sacrifice": "换一家餐厅"
+          }
+        ],
+        "sacrifice": "换一家餐厅",
+        "blockedNode": null,
+        "message": "",
+        "elapsedMs": 0
+      },
+      {
+        "status": "ok",
+        "id": "C",
+        "label": "保少改动",
+        "keepRate": 1.0,
+        "changedCount": 1,
+        "actions": [
+          {
+            "nodeId": "n_lunch",
+            "action": "replace",
+            "payload": {
+              "alternativeId": "a_jiangpan",
+              "fromTitle": "午餐 · 河边餐厅",
+              "toTitle": "江畔小厨"
+            },
+            "reason": "改去「江畔小厨」",
+            "cost": 65.0,
+            "sacrifice": "换一家餐厅"
+          }
+        ],
+        "sacrifice": "换一家餐厅",
+        "blockedNode": null,
+        "message": "",
+        "elapsedMs": 0
+      }
+    ],
+    "blockedNode": null,
+    "message": ""
+  }
+}

@@ -1,11 +1,15 @@
 # 应变 · W1 算法 + W2 接口 / Android 客户端
 
-按 `W1施工图` 重写的 schema、四态传播、`shift/replace/drop` 修复，加上 `W2施工图` 的 6 个接口。
+按 `W1施工图` 实现的 schema、四态传播、`shift/replace/drop` 修复，加上 `W2施工图` 的 6 个接口。
+天气已接和风（`QWEATHER_KEY`，没配就返回明确标注的演示数据）。
 Android 端在 `android/`，默认吃 `fixtures/` 里的 mock，不用等后端。
+
+**唯一数据源是 `data/plan-saturday.json`**；`archive/w2-reference/` 是组员的独立参考实现，
+数据与主实现不同，不参与构建、测试和演示，详见 `archive/README.md`。
 
 ## 30 秒跑起来
 
-不会敲命令：直接双击根目录的 `check-W1.bat`，它会跑完 17 个单元测试和 7 项接口巡检，
+不会敲命令：直接双击根目录的 `check-W1.bat`，它会跑完 23 个单元测试和 7 项接口巡检，
 最后一行显示「7/7 项通过」就是 W1 验收 OK。
 
 ```powershell
@@ -49,7 +53,7 @@ python -m yingbian case T1 --repair --scheme B
 python -m unittest discover -s tests -v
 ```
 
-当前 17 个测试：schema、T1–T4、6 个接口。
+当前 23 个测试：schema、T1–T4、6 个接口、天气（演示/真实/失败降级）、自测页与重置。
 
 ## Android 客户端
 
@@ -113,8 +117,11 @@ cd android
   shift   = 后移分钟 × w_shift
   replace = w_replace + travelMin × 0.5
   drop    = w_drop
-  选最小代价，改完立刻重跑 propagate
+  候选先试跑：会制造新 conflict 的直接淘汰
+  剩下的选最小代价，改完立刻重跑 propagate
 ```
+
+所有阈值和权重都在 `yingbian/rules.py`，改参数不用翻算法。
 
 | 方案 | shift | replace | drop | 性格 |
 |---|---|---|---|---|
@@ -124,22 +131,37 @@ cd android
 
 返回：`actions + keepRate + sacrifice + changedCount`。
 
-## 6 个接口
+## 接口
 
 ```powershell
-uvicorn server.app:app --host 0.0.0.0 --port 8000
+python -m server.app
+# 或 uvicorn server.app:app --host 0.0.0.0 --port 8000
 ```
+
+启动后会打印本机、自测页和局域网地址；手机真机联调时用局域网那条。
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
+| GET | `/` | 网页自测台，点按钮看每个接口的返回 |
 | GET | `/api/plan/{planId}` | 取计划 |
 | POST | `/api/plan/{planId}/event` | 四态、shifts、ratio、path |
 | POST | `/api/plan/{planId}/repair` | 三方案 / blocked |
 | POST | `/api/plan/{planId}/apply` | 应用方案，版本 +1 |
 | POST | `/api/plan/{planId}/undo` | 撤销 |
-| GET | `/api/weather?lat=&lng=` | 天气占位（W3 接和风） |
+| GET | `/api/weather?lat=&lng=` | 天气（真实优先，失败降级并标注） |
+| POST | `/api/reset` | 复位到版本 1，演示前清场用 |
 
 演示 T4 时先用 `POST /api/debug/lock` 锁日落点，再发降雨。
+
+## 天气
+
+```powershell
+$env:QWEATHER_KEY = "你的和风天气 Key"
+python -m server.app
+```
+
+没配 Key 或调用失败时，返回 `source: "演示数据（原因）"`、`isDemo: true`、`note` 说明原因，
+不会把演示数据伪装成真实预报。真实数据返回 `source: "和风天气"`、`isDemo: false`。
 
 ## Android mock
 
@@ -147,11 +169,14 @@ uvicorn server.app:app --host 0.0.0.0 --port 8000
 fixtures/plan-saturday.json     # GET /plan
 fixtures/event-rain-T1.json     # T1 四态
 fixtures/repair-T1.json         # 三方案 + actions
+fixtures/event-cancel-T3.json   # T3 餐厅取消
+fixtures/repair-T3.json         # T3 只改 1 处
 fixtures/blocked-T4.json        # blocked 弹窗
-fixtures/weather.json
+fixtures/weather.json           # 标注 isDemo 的演示天气
 ```
 
-改完算法执行 `python scripts/make_fixtures.py` 重新生成。
+改完算法执行 `python scripts/make_fixtures.py` 重新生成；它会同时写入
+`fixtures/` 和 `android/app/src/main/assets/fixtures/`，两边不会再对不上。
 
 ## 两处口径说明
 
@@ -166,15 +191,28 @@ fixtures/weather.json
 
 ```
 yingbian-core/
-├─ data/plan-saturday.json
-├─ fixtures/
-├─ yingbian/{models,propagate,repair,notify,cli}.py
-├─ server/app.py
-├─ scripts/make_fixtures.py
-└─ tests/
+├─ data/plan-saturday.json        唯一行程数据
+├─ fixtures/                      Android 离线 mock
+├─ yingbian/
+│  ├─ models.py                   schema 与时间工具
+│  ├─ rules.py                    阈值与三套方案权重
+│  ├─ propagate.py                四态传播
+│  ├─ repair.py                   最小修复
+│  ├─ weather.py                  和风天气适配（演示/真实/降级）
+│  ├─ notify.py                   通知文案
+│  └─ cli.py                      python -m yingbian ...
+├─ server/app.py                  六接口 + 自测页 + reset
+├─ scripts/
+│  ├─ make_fixtures.py            从算法重新生成 fixtures
+│  └─ acceptance_w1.py            W1 接口巡检
+├─ tests/                         23 个 unittest
+├─ android/                       Compose 客户端
+├─ archive/w2-reference/          组员独立参考实现（不参与构建）
+├─ check-W1.bat                   双击验收
+└─ .github/workflows/ci.yml       push 自动跑测试
 ```
 
 ## 下一步
 
-W3：接和风天气、补错误处理与降级；W4：真机打包、崩溃兜底和演示脚本。
+W3 剩余：Android 端改成调真实天气接口（后端已就绪）；W4：真机打包、崩溃兜底和演示脚本。
 

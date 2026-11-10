@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .models import Plan, format_time, parse_time
+from .rules import RAIN_IGNORE_PROB, RATIO_LOCAL_MAX, RATIO_VOTE_MAX
 
 
 STATE_RANK = {"ok": 0, "at_risk": 1, "conflict": 2, "invalid": 3}
@@ -120,7 +121,7 @@ def _direct_hit(node, event: Event) -> tuple[str, int, str]:
     if event.type == "delay" and node.id == event.node_id:
         return "at_risk", event.minutes, f"上游延后 {event.minutes} 分钟"
     if event.type == "rain" and event.start is not None and event.end is not None:
-        if event.prob < 0.3:
+        if event.prob < RAIN_IGNORE_PROB:
             return "ok", 0, ""
         if node.indoor:
             return "ok", 0, ""
@@ -199,9 +200,9 @@ def propagate(plan: Plan, event: Event | None = None) -> ImpactReport:
     affected = [node for node in active if states[node.id] != "ok"]
     total = len(active)
     ratio = len(affected) / total if total else 0.0
-    if ratio <= 0.30:
+    if ratio <= RATIO_LOCAL_MAX:
         path = "local"
-    elif ratio <= 0.60:
+    elif ratio <= RATIO_VOTE_MAX:
         path = "vote"
     else:
         path = "global"

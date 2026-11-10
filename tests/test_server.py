@@ -67,6 +67,38 @@ class ServerContractTest(unittest.TestCase):
         self.assertEqual(body["data"]["status"], "blocked")
         self.assertEqual(body["data"]["blockedNode"], "n_sunset")
 
+    def test_weather_is_demo_without_key(self):
+        import os
+
+        old = os.environ.pop("QWEATHER_KEY", None)
+        try:
+            body = self.client.get("/api/weather").json()
+        finally:
+            if old is not None:
+                os.environ["QWEATHER_KEY"] = old
+        weather = body["data"]
+        self.assertTrue(weather["isDemo"])
+        self.assertIn("演示数据", weather["source"])
+        self.assertTrue(weather["fetchedAt"])
+        self.assertIn("note", weather)
+
+    def test_reset_restores_version_one(self):
+        repair_body = self.client.post(
+            f"/api/plan/{self.plan_id}/repair",
+            json={"event": RAIN, "schemes": ["B"]},
+        ).json()
+        actions = repair_body["data"]["schemes"][0]["actions"]
+        self.client.post(f"/api/plan/{self.plan_id}/apply", json={"actions": actions})
+        reset = self.client.post("/api/reset").json()
+        self.assertTrue(reset["data"]["reset"])
+        version = self.client.get(f"/api/plan/{self.plan_id}").json()["data"]["version"]
+        self.assertEqual(version, 1)
+
+    def test_self_test_page_served(self):
+        response = self.client.get("/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("接口自测", response.text)
+
 
 if __name__ == "__main__":
     unittest.main()

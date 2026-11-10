@@ -1,0 +1,37 @@
+{
+  "ok": true,
+  "data": {
+    "states": {
+      "n_meet": "ok",
+      "n_transit_go": "ok",
+      "n_town": "ok",
+      "n_lunch": "invalid",
+      "n_tea": "ok",
+      "n_river": "ok",
+      "n_sunset": "ok",
+      "n_photo": "ok",
+      "n_transit_back": "ok",
+      "n_hotpot": "ok",
+      "n_market": "ok",
+      "n_hotel": "ok"
+    },
+    "shifts": {
+      "n_meet": 0,
+      "n_transit_go": 0,
+      "n_town": 0,
+      "n_lunch": 0,
+      "n_tea": 0,
+      "n_river": 0,
+      "n_sunset": 0,
+      "n_photo": 0,
+      "n_transit_back": 0,
+      "n_hotpot": 0,
+      "n_market": 0,
+      "n_hotel": 0
+    },
+    "ratio": 0.0833,
+    "path": "local",
+    "affectedCount": 1,
+    "totalCount": 12
+  }
+}

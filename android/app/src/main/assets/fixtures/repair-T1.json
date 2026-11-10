@@ -30,7 +30,7 @@
         "sacrifice": "放弃湖边日落点；放弃湖边拍照",
         "blockedNode": null,
         "message": "",
-        "elapsedMs": 0.5
+        "elapsedMs": 0
       },
       {
         "status": "ok",
@@ -63,7 +63,7 @@
         "sacrifice": "看不到日落；放弃湖边拍照",
         "blockedNode": null,
         "message": "",
-        "elapsedMs": 0.4
+        "elapsedMs": 0
       },
       {
         "status": "ok",
@@ -96,7 +96,7 @@
         "sacrifice": "看不到日落；放弃湖边拍照",
         "blockedNode": null,
         "message": "",
-        "elapsedMs": 0.3
+        "elapsedMs": 0
       }
     ],
     "blockedNode": null,

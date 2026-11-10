@@ -1,9 +1,11 @@
 {
   "ok": true,
   "data": {
-    "source": "和风天气（W3 待接入）",
+    "source": "演示数据（Android 离线 mock）",
+    "isDemo": true,
     "fetchedAt": "2026-11-14T17:02",
     "next2hRainProb": 0.7,
-    "text": "15:00 起中雨"
+    "text": "15:00 起中雨",
+    "note": "这是演示数据，不是真实预报；连上后端后显示真实来源。"
   }
 }
