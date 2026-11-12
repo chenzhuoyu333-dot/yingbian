@@ -123,6 +123,50 @@ class GenerateTest(unittest.TestCase):
         bad = [nid for nid, st in report.states.items() if st != "ok"]
         self.assertEqual(bad, [], f"生成结果自带冲突：{bad}")
 
+    def test_temporal_check_catches_overlap(self):
+        """
+        回归测试：一份节点互相重叠的计划必须被判为有问题。
+
+        以前的自检只跑 propagate（无事件时 shifts 全为 0，needed 恒为 0），
+        重叠也查不出来 —— 等于什么都没检查。
+        """
+        overlap = {
+            "planId": "p_bad",
+            "title": "重叠计划",
+            "date": "2026-11-14",
+            "nodes": [
+                {"id": "n1", "type": "place", "title": "A", "start": "10:00", "end": "11:30",
+                 "indoor": False, "confirmed": False, "windowLatest": None, "alternatives": [],
+                 "source": {"kind": "manual", "note": "", "at": "x"}, "confidence": "low", "place": "A"},
+                {"id": "n2", "type": "place", "title": "B", "start": "11:00", "end": "12:00",
+                 "indoor": False, "confirmed": False, "windowLatest": None, "alternatives": [],
+                 "source": {"kind": "manual", "note": "", "at": "x"}, "confidence": "low", "place": "B"},
+            ],
+            "edges": [{"from": "n1", "to": "n2", "type": "precedes", "minGapMin": 10}],
+        }
+        problems = generate_module._temporal_violations(Plan.from_dict(overlap))
+        self.assertTrue(problems, "重叠计划居然没被查出来")
+        self.assertIn("时间重叠", " ".join(problems))
+
+        # 改成不重叠就不该再报
+        fixed = dict(overlap)
+        fixed["nodes"] = [
+            dict(overlap["nodes"][0]),
+            dict(overlap["nodes"][1], start="11:40", end="12:40"),
+        ]
+        self.assertEqual(generate_module._temporal_violations(Plan.from_dict(fixed)), [])
+
+    def test_unresolved_must_visit_is_reported(self):
+        """必去点搜不到时不能静默丢弃：必须有 warning，并写进 unresolvedMustVisit"""
+        with patch("yingbian.generate.find_by_name", return_value=None):
+            plan = self._generate(must_visit=["火星基地"])
+        gen = plan["generation"]
+        self.assertIn("火星基地", gen["unresolvedMustVisit"])
+        self.assertTrue(
+            any("火星基地" in w for w in gen["warnings"]),
+            f"必去点没排进去却没提示：{gen['warnings']}",
+        )
+
     def test_transit_limit_filters_far_points(self):
         """
         通勤上限压到 0：除必去点外都排不进来 → 节点不足 3 个 → 明确报错，

@@ -166,14 +166,67 @@ def _node_from_poi(
     }
 
 
+def _temporal_violations(plan: Plan) -> list[str]:
+    """
+    真正的时间校验：不依赖任何事件，直接看计划自身的时间关系。
+
+    为什么不能只靠 propagate 自检：
+      传播的语义是"上游被顶 → 下游后移"，needed = max(0, shifts[src] - slack)。
+      没有事件时 shifts 全是 0，于是 needed 恒为 0 —— 一份节点互相重叠的计划
+      也会被判定为"没问题"。生成阶段必须自己查时间，这是生成器的职责。
+    """
+    problems: list[str] = []
+
+    # ① 节点自身：时长必须为正，且不能晚于最晚开始时间
+    for node in plan.nodes:
+        if getattr(node, "dropped", False):
+            continue
+        if node.end <= node.start:
+            problems.append(
+                f"{node.id}「{node.title}」时长不合法："
+                f"{format_time(node.start)}–{format_time(node.end)}"
+            )
+        if node.window_latest is not None and node.start > node.window_latest:
+            problems.append(
+                f"{node.id}「{node.title}」开始于 {format_time(node.start)}，"
+                f"晚于最晚 {format_time(node.window_latest)}"
+            )
+
+    # ② 相邻两站：实际间隔必须 ≥ minGap（间隔为负就是重叠）
+    for edge in plan.edges_of("precedes", "requires"):
+        src = plan.find(edge.src)
+        dst = plan.find(edge.dst)
+        if src is None or dst is None:
+            continue
+        if getattr(src, "dropped", False) or getattr(dst, "dropped", False):
+            continue
+        gap = dst.start - src.end
+        if gap < edge.min_gap:
+            kind = "时间重叠" if gap < 0 else "间隔不足"
+            problems.append(
+                f"{edge.src}→{edge.dst} {kind}：实际 {gap} 分，要求 ≥ {edge.min_gap} 分"
+            )
+
+    return problems
+
+
 def _feasibility_check(plan: Plan) -> list[str]:
     """
-    拿"不会命中任何节点"的事件跑一遍传播：
-    如果计划本身就有节点非 ok，说明排得太满 —— 这是生成阶段的自检。
+    生成阶段的自检 = 时间校验 + 引擎复核。
+
+    · 时间校验：由 _temporal_violations 负责，能发现重叠、间隔不足、时长为负
+    · 引擎复核：确认引擎没有把任何节点判成 at_risk/invalid/conflict
+    两者都必要：前者补上了引擎在没有事件时查不出来的问题。
     """
+    problems = _temporal_violations(plan)
+
     dummy = Event.from_dict({"type": "rain", "from": "00:00", "to": "00:01", "prob": 0.0})
     report = propagate(plan, dummy)
-    return [nid for nid, state in report.states.items() if state != "ok"]
+    for node_id, state in report.states.items():
+        if state != "ok":
+            problems.append(f"{node_id} 被约束引擎判为 {state}")
+
+    return problems
 
 
 def generate(prefs: Preferences) -> dict:
@@ -185,18 +238,29 @@ def generate(prefs: Preferences) -> dict:
     candidates = search_interests(prefs.city, prefs.interests)
     candidates = [p for p in candidates if not _blocked(p, prefs.avoid)]
 
-    # ② 必去点
+    # ② 必去点：搜不到或被排除词挡掉，都要留下痕迹，不能当没发生
     must_pois: list[Poi] = []
+    unresolved: list[str] = []
     for name in prefs.must_visit:
         found = find_by_name(prefs.city, name)
-        if found and not _blocked(found, prefs.avoid):
-            must_pois.append(found)
+        if found is None:
+            unresolved.append(name)
+            continue
+        if _blocked(found, prefs.avoid):
+            unresolved.append(name)
+            continue
+        must_pois.append(found)
 
     if not must_pois and not candidates:
         raise RuntimeError(f"在「{prefs.city}」没搜到符合偏好的地点，换个兴趣词试试")
 
     origin = _pick_origin(prefs, must_pois + candidates)
     warnings: list[str] = []
+
+    # 未解析的必去点必须显式告知：用户说了"必去"，结果没排进去，
+    # 静默丢掉会让用户以为计划里已经有它了。
+    for name in unresolved:
+        warnings.append(f"必去点「{name}」没搜到（或与排除条件冲突），已标记为待确认，请手动确认是否需要加回")
 
     # 集合点占 start_time ~ start_time+20，排序必须从它结束之后开始算
     meeting_min = parse_time(prefs.start_time)
@@ -279,6 +343,8 @@ def generate(prefs: Preferences) -> dict:
             "city": prefs.city,
             "interests": list(prefs.interests),
             "mustVisit": list(prefs.must_visit),
+            # 用户点名但没排进去的必去点，界面上要标"待确认"
+            "unresolvedMustVisit": list(unresolved),
             "pace": prefs.pace,
             "maxTransitMin": prefs.max_transit_min,
             "warnings": warnings,
@@ -286,7 +352,7 @@ def generate(prefs: Preferences) -> dict:
         },
     }
 
-    # ⑥ 自检：把生成的图喂给同一套约束引擎
+    # ⑥ 自检：时间校验 + 引擎复核（两者都必要，见 _feasibility_check 注释）
     problems = _feasibility_check(Plan.from_dict(plan))
     if problems:
         trimmed = dict(plan)
@@ -296,12 +362,11 @@ def generate(prefs: Preferences) -> dict:
             trimmed["generation"] = dict(plan["generation"])
             trimmed["generation"]["warnings"] = warnings + [
                 f"排得太满，已自动砍掉最后 2 个点（原 {len(plan['nodes'])} 个节点）"
-            ]
+            ] + problems
             plan = trimmed
         else:
-            plan["generation"]["warnings"] = warnings + [
-                "自检仍有冲突，建议缩短时间窗或降低 pace"
-            ]
+            # 砍点也救不回来：把具体哪条出了问题原样带出去，不要只说"有冲突"
+            plan["generation"]["warnings"] = warnings + problems
 
     return plan
 

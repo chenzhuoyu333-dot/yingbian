@@ -25,8 +25,8 @@
       "id": "n_1",
       "type": "place",
       "title": "清河坊历史文化特色街区",
-      "start": "10:11",
-      "end": "11:41",
+      "start": "10:13",
+      "end": "11:43",
       "indoor": false,
       "confirmed": true,
       "windowLatest": null,
@@ -43,8 +43,8 @@
       "id": "n_2",
       "type": "place",
       "title": "清河坊步行街",
-      "start": "11:51",
-      "end": "12:51",
+      "start": "11:53",
+      "end": "12:53",
       "indoor": true,
       "confirmed": false,
       "windowLatest": null,
@@ -60,9 +60,9 @@
     {
       "id": "n_3",
       "type": "place",
-      "title": "胡庆馀堂中药博物馆",
-      "start": "13:01",
-      "end": "14:21",
+      "title": "杭州博物馆",
+      "start": "13:04",
+      "end": "14:24",
       "indoor": true,
       "confirmed": false,
       "windowLatest": null,
@@ -73,14 +73,14 @@
         "at": "2026-11-14"
       },
       "confidence": "low",
-      "place": "胡庆馀堂中药博物馆"
+      "place": "杭州博物馆"
     },
     {
       "id": "n_4",
       "type": "place",
       "title": "鼓楼",
-      "start": "14:32",
-      "end": "16:02",
+      "start": "14:36",
+      "end": "16:06",
       "indoor": false,
       "confirmed": false,
       "windowLatest": null,
@@ -96,56 +96,38 @@
     {
       "id": "n_5",
       "type": "place",
-      "title": "灰色博物馆(杭州解百A座店)",
-      "start": "16:19",
-      "end": "17:04",
+      "title": "南宋德寿宫遗址博物馆",
+      "start": "16:17",
+      "end": "17:37",
       "indoor": true,
       "confirmed": false,
       "windowLatest": null,
       "alternatives": [],
       "source": {
         "kind": "api",
-        "note": "高德 POI 检索 · 科教文化服务;科教文化场所;科教文化场所",
+        "note": "高德 POI 检索 · 科教文化服务;博物馆;博物馆",
         "at": "2026-11-14"
       },
       "confidence": "low",
-      "place": "灰色博物馆(杭州解百A座店)"
+      "place": "南宋德寿宫遗址博物馆"
     },
     {
       "id": "n_6",
       "type": "place",
-      "title": "湖滨步行街",
-      "start": "17:17",
-      "end": "18:17",
-      "indoor": true,
-      "confirmed": false,
-      "windowLatest": null,
-      "alternatives": [],
-      "source": {
-        "kind": "api",
-        "note": "高德 POI 检索 · 购物服务;特色商业街;步行街",
-        "at": "2026-11-14"
-      },
-      "confidence": "low",
-      "place": "湖滨步行街"
-    },
-    {
-      "id": "n_7",
-      "type": "place",
-      "title": "杭州西湖风景名胜区-湖滨公园",
-      "start": "18:29",
-      "end": "19:59",
+      "title": "胡雪岩旧居",
+      "start": "17:48",
+      "end": "19:18",
       "indoor": false,
       "confirmed": false,
       "windowLatest": null,
       "alternatives": [],
       "source": {
         "kind": "api",
-        "note": "高德 POI 检索 · 风景名胜;公园广场;公园",
+        "note": "高德 POI 检索 · 风景名胜;风景名胜;纪念馆",
         "at": "2026-11-14"
       },
       "confidence": "low",
-      "place": "杭州西湖风景名胜区-湖滨公园"
+      "place": "胡雪岩旧居"
     }
   ],
   "edges": [
@@ -153,7 +135,7 @@
       "from": "n_meet",
       "to": "n_1",
       "type": "precedes",
-      "minGapMin": 21
+      "minGapMin": 23
     },
     {
       "from": "n_1",
@@ -165,31 +147,25 @@
       "from": "n_2",
       "to": "n_3",
       "type": "precedes",
-      "minGapMin": 10
+      "minGapMin": 11
     },
     {
       "from": "n_3",
       "to": "n_4",
       "type": "precedes",
-      "minGapMin": 11
+      "minGapMin": 12
     },
     {
       "from": "n_4",
       "to": "n_5",
       "type": "precedes",
-      "minGapMin": 17
+      "minGapMin": 11
     },
     {
       "from": "n_5",
       "to": "n_6",
       "type": "precedes",
-      "minGapMin": 13
-    },
-    {
-      "from": "n_6",
-      "to": "n_7",
-      "type": "precedes",
-      "minGapMin": 12
+      "minGapMin": 11
     }
   ],
   "generation": {
@@ -197,15 +173,20 @@
     "interests": [
       "景点",
       "公园",
-      "博物馆",
       "咖啡"
     ],
     "mustVisit": [
-      "清河坊历史文化特色街区"
+      "清河坊历史文化特色街区",
+      "这个地点根本不存在"
+    ],
+    "unresolvedMustVisit": [
+      "这个地点根本不存在"
     ],
     "pace": "normal",
     "maxTransitMin": 45,
-    "warnings": [],
+    "warnings": [
+      "必去点「这个地点根本不存在」没搜到（或与排除条件冲突），已标记为待确认，请手动确认是否需要加回"
+    ],
     "note": "地点来自高德 POI 检索；停留时长为经验值，通勤为直线距离估算，均标 confidence=low，请用户确认"
   }
 }

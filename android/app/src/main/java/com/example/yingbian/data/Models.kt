@@ -51,6 +51,10 @@ data class Plan(
     val version: Int,
     val nodes: List<PlanNode>,
     val edges: List<PlanEdge>,
+    /** 生成器给出的提示（必去点没排进去、自检发现问题等）；内置计划为空 */
+    val generationWarnings: List<String> = emptyList(),
+    /** 用户点名但没排进去的必去点，界面上要标「待确认」 */
+    val unresolvedMustVisit: List<String> = emptyList(),
 ) {
     fun node(id: String): PlanNode? = nodes.firstOrNull { it.id == id }
 }
@@ -205,6 +209,12 @@ object PlanJson {
     private fun JSONArray.objects(): List<JSONObject> =
         (0 until length()).mapNotNull { index -> optJSONObject(index) }
 
+    // 字符串数组要单独取：objects() 只拿 JSONObject，警告列表会被整段丢掉
+    private fun JSONArray.strings(): List<String> =
+        (0 until length()).mapNotNull { index ->
+            optString(index, "").takeIf { it.isNotBlank() }
+        }
+
     fun parsePlan(raw: JSONObject): Plan {
         val nodes = raw.optJSONArray("nodes")?.objects().orEmpty().map { item ->
             PlanNode(
@@ -244,6 +254,11 @@ object PlanJson {
                 minGapMin = item.optInt("minGapMin", 0),
             )
         }
+        // 生成器把这些放在 generation 字段里；内置计划没有这一段，读成空即可
+        val generation = raw.optJSONObject("generation")
+        val warnings = generation?.optJSONArray("warnings")?.strings().orEmpty()
+        val unresolved = generation?.optJSONArray("unresolvedMustVisit")?.strings().orEmpty()
+
         return Plan(
             planId = raw.text("planId"),
             title = raw.text("title"),
@@ -251,6 +266,8 @@ object PlanJson {
             version = raw.optInt("version", 1),
             nodes = nodes,
             edges = edges,
+            generationWarnings = warnings,
+            unresolvedMustVisit = unresolved,
         )
     }
 

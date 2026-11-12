@@ -66,6 +66,9 @@ fun PlanScreen(
     Column(modifier = Modifier.fillMaxSize()) {
         WeatherCard(weather)
         if (offline) OfflineBanner()
+        if (plan.unresolvedMustVisit.isNotEmpty() || plan.generationWarnings.isNotEmpty()) {
+            GenerateNotice(plan)
+        }
         impact?.let { ImpactSummary(it, eventTitle, onImpact) }
         LazyColumn(
             modifier = Modifier.weight(1f),
@@ -162,6 +165,45 @@ private fun WeatherCard(weather: Weather?) {
                 fontWeight = FontWeight.Bold,
                 color = if ((weather?.rainProb ?: 0.0) >= 0.6) ConflictOrange else OkGreen,
             )
+        }
+    }
+}
+
+/**
+ * 生成提示：告诉用户"你点名的必去点没排进去"或"自检发现了什么"。
+ *
+ * 这一块是必须的 —— 生成器静默丢掉必去点，用户会以为计划里已经有它了，
+ * 到现场才发现没排，比不生成还糟。
+ */
+@Composable
+private fun GenerateNotice(plan: Plan) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        color = Color(0xFFFFF1F0),
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            if (plan.unresolvedMustVisit.isNotEmpty()) {
+                Text(
+                    text = "必去点待确认：${plan.unresolvedMustVisit.joinToString("、")}",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ConflictOrange,
+                )
+                Text(
+                    text = "这些地点没搜到，暂时没排进行程，需要你手动确认",
+                    fontSize = 10.sp,
+                    color = Muted,
+                )
+            }
+            plan.generationWarnings.take(3).forEach { warning ->
+                Text(
+                    text = "· $warning",
+                    fontSize = 10.sp,
+                    color = Muted,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
         }
     }
 }
