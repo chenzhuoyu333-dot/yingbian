@@ -260,6 +260,109 @@ python scripts/bench.py                                   # 性能表，直接�
 后端已就绪。App 侧的 W3 事项：**真机连一次真实后端 → 录 90 秒 → 彩排**。
 五态（空/加载/失败/阻断/离线）和离线缓存已在 Compose 客户端里实现。
 
+## 从偏好生成行程（生成 = 反过来的修复）
+
+```powershell
+python -m yingbian generate --city 杭州 --interests 景点,公园,博物馆,咖啡 `
+    --must-visit 清河坊历史文化特色街区 --pace normal --max-transit 45
+```
+
+或走接口：
+
+```powershell
+POST /api/generate
+{"city":"杭州","interests":["景点","公园","咖啡"],
+ "mustVisit":["清河坊历史文化特色街区"],"pace":"normal","maxTransitMin":45}
+```
+
+产出是一张**与 `data/plan-*.json` 同构**的计划图，并且会注册进计划表，
+所以生成完可以直接 `/event`、`/repair`、`/apply`、`/undo`。
+
+### 三个设计决定
+
+**① 生成 = 反过来的修复**
+先按偏好贪心排一版，再拿**同一套约束**做自检：`_temporal_violations` 查重叠/间隔不足/时长为负，
+再跑一遍引擎确认没有节点被判成非 ok。自检不过就自动砍掉最后两个点，并把具体问题写进 `generation.warnings`。
+
+> 注意：只跑 `propagate` 是**查不出**时间重叠的 —— 它的语义是"上游被顶→下游后移"，
+> 没有事件时 shifts 全为 0，`needed` 恒为 0。时间校验必须单独做。
+
+**② 必去点自动锁定，且不会被静默丢掉**
+`--must-visit` 的点标 `confirmed: true`，且**不受通勤上限过滤**。
+搜不到或被 `avoid` 挡掉时，写进 `generation.unresolvedMustVisit` 并给 warning，
+App 顶部显示「必去点待确认」——不能假装它已经排进去了。
+
+**③ 通勤用估算，不调路径规划**
+一次生成二三十条边，逐个调高德路径规划既慢又吃免费配额（个人 Key QPS 很低，连发就 `10021`）。
+所以用直线距离 + 保守分速度估算，标 `confidence: low`，不假装精确。
+`poi.py` 里另有请求节流与退避重试。
+
+### 已知边界
+
+- 高德 POI **没有开放时间和门票**，每个点都是 `confidence: low`，需要用户确认
+- 停留时长是经验值（景点 90 分、餐饮 60 分、咖啡 40 分），按 `pace` 缩放
+- 风格词（"拍照""夜景"）不能当 POI 关键词检索，会被翻译掉；全被翻译掉时退回默认类别
+- **生成结果必须人工过一遍**再拿去演示
+
+## AI 接入：只站两头，不站中间
+
+```
+用户说的一句话
+      ↓
+ 【 AI：理解意图 】   yingbian/ai.py  → 结构化偏好 / 结构化事件
+      ↓
+ 【 确定性算法 】     propagate / repair / generate
+      ↓
+ 【 AI：解释结果 】   yingbian/ai.py  → 人话
+      ↓
+   用户看到的方案
+```
+
+**决策层不给模型**：改哪几处、保留率多少、为什么不动锁定节点，必须可复现、可追问。
+模型编一个方案出来，我们没法回答"为什么是这三处"——这条边界本身就是评分点。
+
+### 配置
+
+```powershell
+# .env
+LLM_API_KEY=sk-xxxx
+LLM_BASE_URL=https://api.deepseek.com/v1   # 任何 OpenAI 兼容端点
+LLM_MODEL=deepseek-chat
+```
+
+换厂商只改这三行（通义 / 智谱 / Kimi 都有兼容端点，示例见 `.env.example`）。
+
+### 两个接口
+
+```powershell
+POST /api/interpret {"text":"想拍照、不想早起，别爬山"}
+→ {"intent":"generate","preferences":{...},"source":{"preferences":"ai"}}
+
+POST /api/interpret {"text":"下午要下雨了，四点下到六点"}
+→ {"intent":"event","event":{"type":"rain","from":"16:00","to":"18:00"},"source":{"event":"ai"}}
+
+POST /api/generate  {"text":"轻松一点，想看博物馆，别爬山"}   # 一句话直接生成
+```
+
+### 降级：没有 Key 也要能演示
+
+`source` 字段如实标注这次是 `ai` 还是 `rule`：
+
+| 情况 | 行为 |
+|---|---|
+| 配了 Key 且模型返回合法 JSON | `source: "ai"` |
+| 没配 Key / 超时 / 不是 JSON / 字段不合法 | 退回规则解析，`source: "rule"` |
+| 模型给了非法时间（如 `25:99`） | 该字段用规则结果顶掉，不让坏值流到排程 |
+
+规则层不是摆设，能处理中文口语时间（"晚上六点到七点"→18:00–19:00、
+"下午两点半"→14:30，"轻松一点"不会被当成 1 点）和否定语境（"别爬山"→ `avoid`）。
+
+### 已知边界
+
+- 规则层对**复合否定**和**相对时间**（"后天""下周三"）不可靠，靠模型补
+- 事件里的具体节点（取消哪一站）规则层猜不准，默认 `n_lunch`，需要界面让用户确认
+- `explain_scheme`（把方案翻译成人话）已实现但还没接到 App 上
+
 ## 目录
 
 ```

@@ -16,6 +16,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from yingbian import Event, load_plan, propagate, repair
+from yingbian.ai import (
+    available as ai_available,
+    explain_scheme,
+    parse_event as ai_parse_event,
+    parse_preferences as ai_parse_preferences,
+)
 from yingbian.generate import Preferences, generate
 from yingbian.models import Plan, PlanError
 from yingbian.repair import apply_actions
@@ -125,6 +131,46 @@ def index():
     return INDEX_HTML.replace("__PLAN__", BASE.plan_id)
 
 
+@app.post("/api/interpret")
+def post_interpret(body: dict = Body(...)):
+    """
+    一句话 → 结构化意图。这是 AI 站在"理解输入"这一头的地方。
+
+      POST /api/interpret {"text":"想拍照、不想早起，别爬山"}
+      → {"intent":"generate","preferences":{...},"source":{"preferences":"ai"}}
+
+      POST /api/interpret {"text":"下午要下雨了"}
+      → {"intent":"event","event":{"type":"rain",...},"source":{"event":"ai"}}
+
+    source 如实告诉调用方这次是模型解析（ai）还是规则兜底（rule），
+    界面应该显示出来 —— 不能把规则结果伪装成模型结果。
+    """
+    text = str(body.get("text") or "").strip()
+    if not text:
+        return _error("EMPTY_TEXT", "先说一句话，例如「想拍照、不想早起，别爬山」或「下午要下雨了」")
+
+    # 意图判定用规则做，不用模型：这一步必须稳定可复现
+    event_candidate, event_source = ai_parse_event(text)
+    preferences, pref_source = ai_parse_preferences(text)
+
+    intent = "event" if event_candidate and event_candidate.get("type") in ("rain", "delay", "cancel") else "generate"
+
+    return _ok(
+        {
+            "intent": intent,
+            "text": text,
+            "preferences": preferences if intent == "generate" else None,
+            "event": event_candidate if intent == "event" else None,
+            "source": {"preferences": pref_source, "event": event_source},
+            "aiAvailable": ai_available(),
+            "note": (
+                "模型解析" if (pref_source == "ai" or event_source == "ai")
+                else "规则解析（未配 LLM_API_KEY 或模型调用失败），功能降级但可用"
+            ),
+        }
+    )
+
+
 @app.post("/api/generate")
 def post_generate(body: dict = Body(...)):
     """
@@ -135,9 +181,22 @@ def post_generate(body: dict = Body(...)):
        "interests":["景点","公园","咖啡"],"mustVisit":["清河坊历史文化特色街区"],
        "avoid":["爬山"],"pace":"normal","maxTransitMin":45,"startPlace":""}
 
+    也可以只给一句话，由 AI 解析成偏好：
+      {"text":"想拍照、不想早起、别爬山"}
+
     为什么要注册进来：生成不是终点。用户看到行程后马上要能"下雨了怎么办"，
     所以生成的计划必须和内置计划享受同一套 /event、/repair、/apply、/undo。
     """
+    interpretation = None
+    text = str(body.get("text") or "").strip()
+    if text:
+        # AI 解析；显式给了的字段优先，其余由解析结果补
+        parsed, source = ai_parse_preferences(text)
+        for field, value in parsed.items():
+            if field not in body or body.get(field) in (None, "", []):
+                body[field] = value
+        interpretation = {"text": text, "source": source}
+
     try:
         prefs = Preferences(
             city=str(body.get("city") or "杭州"),
@@ -164,6 +223,8 @@ def post_generate(body: dict = Body(...)):
             "plan": parsed.to_dict(),
             "version": 1,
             "generation": raw_plan.get("generation", {}),
+            # 这次偏好是怎么来的：模型解析还是规则解析，界面要如实显示
+            "interpretation": interpretation,
             "hint": f"接下来可以 POST /api/plan/{parsed.plan_id}/event 试试下雨",
         }
     )

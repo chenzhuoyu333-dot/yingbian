@@ -51,6 +51,48 @@ _STAY_MIN = {
 # 兴趣词 → 高德检索关键词（用户说"古镇"就搜"古镇"）
 DEFAULT_INTERESTS = ["景点", "公园", "博物馆", "咖啡"]
 
+# 用户嘴里的"兴趣"不都是能拿去搜 POI 的关键词：
+#   "拍照""夜景"是风格诉求，拿去做 keywords 搜不出像样的地点，
+#   硬搜的结果就是只排出三四个点，整份计划没法看。
+# 所以这里显式区分：能搜的给关键词，不能搜的留空（只当偏好，不影响检索）。
+INTEREST_KEYWORDS: dict[str, list[str]] = {
+    "景点": ["景点"],
+    "古镇": ["古镇", "老街"],
+    "公园": ["公园"],
+    "博物馆": ["博物馆"],
+    "咖啡": ["咖啡"],
+    "美食": ["美食"],
+    "夜景": ["夜景"],
+    "爬山": ["山"],
+    "拍照": [],   # 风格词：不参与检索
+    "摄影": [],
+    "打卡": [],
+}
+
+
+def expand_interests(interests: list[str]) -> list[str]:
+    """
+    把用户的兴趣词翻译成真正能拿去检索的关键词。
+    如果一个都翻译不出来（例如只说"想拍照"），退回默认类别 ——
+    否则会搜到极少量地点，生成器只能排出三四个点。
+    """
+    words: list[str] = []
+    for interest in interests or []:
+        mapped = INTEREST_KEYWORDS.get(interest)
+        if mapped is None:
+            # 不在词表里的词，原样当关键词用（用户可能说了具体地名/类型）
+            if interest.strip():
+                words.append(interest.strip())
+        else:
+            words.extend(mapped)
+
+    if not words:
+        words = ["景点", "公园", "博物馆", "咖啡"]
+    # 去重但保序
+    seen: set[str] = set()
+    unique = [w for w in words if not (w in seen or seen.add(w))]
+    return unique
+
 
 @dataclass
 class Poi:
@@ -198,10 +240,10 @@ def search_keyword(city: str, keyword: str, limit: int = MAX_PER_KEYWORD) -> lis
 
 
 def search_interests(city: str, interests: list[str]) -> list[Poi]:
-    """按多个兴趣词检索并合并去重（保持每个词各自的候选量）"""
+    """按多个兴趣词检索并合并去重（风格词会被翻译掉，翻不出来就退回默认类别）"""
     collected: list[Poi] = []
     seen: set[str] = set()
-    for word in interests or DEFAULT_INTERESTS:
+    for word in expand_interests(list(interests or [])):
         for poi in search_keyword(city, word):
             if poi.name in seen:
                 continue
