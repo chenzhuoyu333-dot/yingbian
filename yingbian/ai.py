@@ -350,11 +350,24 @@ def _rule_event(text: str) -> dict | None:
 
 # ── 对外两个能力 ──────────────────────────────────
 _PREF_SYSTEM = """你是行程偏好解析器。把用户的中文需求解析成 JSON，只输出 JSON，不要解释。
-字段：city(字符串)、startTime(HH:mm)、endTime(HH:mm)、interests(字符串数组，
-取值只能是 古镇/公园/博物馆/咖啡/美食/夜景/拍照/爬山 之一)、mustVisit(字符串数组)、
-avoid(字符串数组)、pace(relaxed|normal|packed)、maxTransitMin(整数分钟，5~120)。
-拿不准的字段用默认值：city=杭州, startTime=09:30, endTime=20:00,
-interests=["景点","公园","咖啡"], pace=normal, maxTransitMin=45。"""
+
+最重要的一条：**只输出用户明确表达、或能从话里合理推断的字段；没有依据的字段一律给 null**。
+不要用默认值去填空 —— 默认值会覆盖掉别处更可靠的推断结果。
+
+字段：
+  city: 城市名或 null
+  startTime: "HH:mm" 或 null（"不想早起/晚点出发/睡到自然醒"要据此给出具体时间）
+  endTime: "HH:mm" 或 null（"早点回/不想太晚"要据此给出具体时间）
+  interests: 字符串数组，取值只能是 古镇/公园/博物馆/咖啡/美食/夜景/拍照/爬山，
+             最多 4 个；用户没提就输出 []
+  mustVisit: 字符串数组，用户说"必去/一定要去"的具体地点名，最多 3 个；没有就输出 []
+  avoid: 字符串数组，用户说"不想/别去/不去"的东西；没有就输出 []
+  pace: "relaxed" | "normal" | "packed" 或 null（"轻松/不想赶"→relaxed，"多去几个"→packed）
+  maxTransitMin: 整数或 null
+
+示例：输入"想拍照、不想早起，别爬山，轻松一点"
+输出：{"city":null,"startTime":"10:30","endTime":null,"interests":["拍照"],
+       "mustVisit":[],"avoid":["爬山"],"pace":"relaxed","maxTransitMin":null}"""
 
 
 def parse_preferences(text: str) -> tuple[dict, str]:
@@ -377,10 +390,30 @@ def parse_preferences(text: str) -> tuple[dict, str]:
                 merged[field] = fixed[field]
         if merged.get("pace") not in ("relaxed", "normal", "packed"):
             merged["pace"] = fixed["pace"]
+
+        # 硬字段以规则为准：规则层的默认值是 09:30/20:00，
+        # 一旦它给出别的值，说明文本里有明确线索（"不想早起""早点回"），
+        # 这时不能被模型的默认值盖掉 —— 实测模型经常坚持填 20:00。
+        _DEFAULTS = {"startTime": "09:30", "endTime": "20:00"}
+        for field, default in _DEFAULTS.items():
+            if fixed[field] != default:
+                merged[field] = fixed[field]
         try:
             merged["maxTransitMin"] = max(5, min(120, int(merged.get("maxTransitMin", 45))))
         except (TypeError, ValueError):
             merged["maxTransitMin"] = 45
+
+        # 数量上限：模型容易"全都要"，7 个兴趣词会让检索变慢且吃 QPS
+        interests = merged.get("interests")
+        if isinstance(interests, list):
+            merged["interests"] = [str(i) for i in interests][:4] or fixed["interests"]
+        must = merged.get("mustVisit")
+        if isinstance(must, list):
+            merged["mustVisit"] = [str(m) for m in must][:3]
+        avoid = merged.get("avoid")
+        if isinstance(avoid, list):
+            merged["avoid"] = [str(a) for a in avoid][:4]
+
         return merged, "ai"
     return _rule_preferences(text), "rule"
 
