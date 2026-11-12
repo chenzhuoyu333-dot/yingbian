@@ -1,0 +1,211 @@
+{
+  "planId": "p_generated",
+  "title": "2026-11-14 杭州一日行程（据偏好生成）",
+  "date": "2026-11-14",
+  "nodes": [
+    {
+      "id": "n_meet",
+      "type": "place",
+      "title": "杭州市中心",
+      "start": "09:30",
+      "end": "09:50",
+      "indoor": true,
+      "confirmed": true,
+      "windowLatest": null,
+      "alternatives": [],
+      "source": {
+        "kind": "manual",
+        "note": "生成器自动设定的集合点",
+        "at": "2026-11-14"
+      },
+      "confidence": "medium",
+      "place": "杭州市中心"
+    },
+    {
+      "id": "n_1",
+      "type": "place",
+      "title": "清河坊历史文化特色街区",
+      "start": "10:11",
+      "end": "11:41",
+      "indoor": false,
+      "confirmed": true,
+      "windowLatest": null,
+      "alternatives": [],
+      "source": {
+        "kind": "api",
+        "note": "高德 POI 检索 · 风景名胜;风景名胜;国家级景点",
+        "at": "2026-11-14"
+      },
+      "confidence": "low",
+      "place": "清河坊历史文化特色街区"
+    },
+    {
+      "id": "n_2",
+      "type": "place",
+      "title": "清河坊步行街",
+      "start": "11:51",
+      "end": "12:51",
+      "indoor": true,
+      "confirmed": false,
+      "windowLatest": null,
+      "alternatives": [],
+      "source": {
+        "kind": "api",
+        "note": "高德 POI 检索 · 购物服务;特色商业街;步行街",
+        "at": "2026-11-14"
+      },
+      "confidence": "low",
+      "place": "清河坊步行街"
+    },
+    {
+      "id": "n_3",
+      "type": "place",
+      "title": "胡庆馀堂中药博物馆",
+      "start": "13:01",
+      "end": "14:21",
+      "indoor": true,
+      "confirmed": false,
+      "windowLatest": null,
+      "alternatives": [],
+      "source": {
+        "kind": "api",
+        "note": "高德 POI 检索 · 科教文化服务;博物馆;博物馆",
+        "at": "2026-11-14"
+      },
+      "confidence": "low",
+      "place": "胡庆馀堂中药博物馆"
+    },
+    {
+      "id": "n_4",
+      "type": "place",
+      "title": "鼓楼",
+      "start": "14:32",
+      "end": "16:02",
+      "indoor": false,
+      "confirmed": false,
+      "windowLatest": null,
+      "alternatives": [],
+      "source": {
+        "kind": "api",
+        "note": "高德 POI 检索 · 风景名胜;风景名胜;风景名胜",
+        "at": "2026-11-14"
+      },
+      "confidence": "low",
+      "place": "鼓楼"
+    },
+    {
+      "id": "n_5",
+      "type": "place",
+      "title": "灰色博物馆(杭州解百A座店)",
+      "start": "16:19",
+      "end": "17:04",
+      "indoor": true,
+      "confirmed": false,
+      "windowLatest": null,
+      "alternatives": [],
+      "source": {
+        "kind": "api",
+        "note": "高德 POI 检索 · 科教文化服务;科教文化场所;科教文化场所",
+        "at": "2026-11-14"
+      },
+      "confidence": "low",
+      "place": "灰色博物馆(杭州解百A座店)"
+    },
+    {
+      "id": "n_6",
+      "type": "place",
+      "title": "湖滨步行街",
+      "start": "17:17",
+      "end": "18:17",
+      "indoor": true,
+      "confirmed": false,
+      "windowLatest": null,
+      "alternatives": [],
+      "source": {
+        "kind": "api",
+        "note": "高德 POI 检索 · 购物服务;特色商业街;步行街",
+        "at": "2026-11-14"
+      },
+      "confidence": "low",
+      "place": "湖滨步行街"
+    },
+    {
+      "id": "n_7",
+      "type": "place",
+      "title": "杭州西湖风景名胜区-湖滨公园",
+      "start": "18:29",
+      "end": "19:59",
+      "indoor": false,
+      "confirmed": false,
+      "windowLatest": null,
+      "alternatives": [],
+      "source": {
+        "kind": "api",
+        "note": "高德 POI 检索 · 风景名胜;公园广场;公园",
+        "at": "2026-11-14"
+      },
+      "confidence": "low",
+      "place": "杭州西湖风景名胜区-湖滨公园"
+    }
+  ],
+  "edges": [
+    {
+      "from": "n_meet",
+      "to": "n_1",
+      "type": "precedes",
+      "minGapMin": 21
+    },
+    {
+      "from": "n_1",
+      "to": "n_2",
+      "type": "precedes",
+      "minGapMin": 10
+    },
+    {
+      "from": "n_2",
+      "to": "n_3",
+      "type": "precedes",
+      "minGapMin": 10
+    },
+    {
+      "from": "n_3",
+      "to": "n_4",
+      "type": "precedes",
+      "minGapMin": 11
+    },
+    {
+      "from": "n_4",
+      "to": "n_5",
+      "type": "precedes",
+      "minGapMin": 17
+    },
+    {
+      "from": "n_5",
+      "to": "n_6",
+      "type": "precedes",
+      "minGapMin": 13
+    },
+    {
+      "from": "n_6",
+      "to": "n_7",
+      "type": "precedes",
+      "minGapMin": 12
+    }
+  ],
+  "generation": {
+    "city": "杭州",
+    "interests": [
+      "景点",
+      "公园",
+      "博物馆",
+      "咖啡"
+    ],
+    "mustVisit": [
+      "清河坊历史文化特色街区"
+    ],
+    "pace": "normal",
+    "maxTransitMin": 45,
+    "warnings": [],
+    "note": "地点来自高德 POI 检索；停留时长为经验值，通勤为直线距离估算，均标 confidence=low，请用户确认"
+  }
+}

@@ -138,6 +138,53 @@ def cmd_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_generate(args: argparse.Namespace) -> int:
+    from .generate import Preferences, generate, save
+
+    def split(text: str) -> list[str]:
+        return [x.strip() for x in (text or "").split(",") if x.strip()]
+
+    prefs = Preferences(
+        city=args.city,
+        date=args.date,
+        start_time=args.start_time,
+        end_time=args.end_time,
+        interests=split(args.interests) or None,
+        must_visit=split(args.must_visit),
+        avoid=split(args.avoid),
+        pace=args.pace,
+        max_transit_min=args.max_transit_min,
+        start_place=args.start_place,
+    )
+
+    plan = generate(prefs)
+    nodes = plan["nodes"]
+    edges = plan["edges"]
+
+    print("")
+    print("=" * 72)
+    print(f"生成完成 · {plan['title']}")
+    print(f"节点 {len(nodes)} · 边 {len(edges)} · 锁定 {sum(1 for n in nodes if n['confirmed'])}")
+    print("=" * 72)
+    for n in nodes:
+        lock = "[锁]" if n["confirmed"] else "    "
+        where = "室内" if n["indoor"] else "室外"
+        print(f"  {n['start']}-{n['end']} {lock} {n['title'][:30]:<32}{where}")
+    print("-" * 72)
+    print("通勤估算（分钟）：", [e["minGapMin"] for e in edges])
+    warnings = plan.get("generation", {}).get("warnings") or []
+    print("提示：", ("；".join(warnings) if warnings else "无"))
+    out = save(plan, args.out)
+    print(f"已保存：{out}")
+    print("下一步：把这份计划喂给引擎看看它有多脆")
+    print(f"  python -m yingbian dump --data {out}")
+    print("=" * 72)
+    print("")
+    if args.json:
+        print(json.dumps(plan, ensure_ascii=False))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="yingbian", description="应变 W1 施工图 CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -155,6 +202,21 @@ def build_parser() -> argparse.ArgumentParser:
     case.add_argument("--data", default=None)
     case.add_argument("--json", action="store_true")
     case.set_defaults(func=cmd_case)
+
+    gen = sub.add_parser("generate", help="按偏好用高德 POI 生成一份行程")
+    gen.add_argument("--city", default="杭州")
+    gen.add_argument("--date", default="2026-11-14")
+    gen.add_argument("--start", dest="start_time", default="09:30")
+    gen.add_argument("--end", dest="end_time", default="20:00")
+    gen.add_argument("--interests", default="景点,公园,博物馆,咖啡", help="逗号分隔")
+    gen.add_argument("--must-visit", dest="must_visit", default="", help="逗号分隔的必去地点名")
+    gen.add_argument("--avoid", default="", help="逗号分隔的排除词")
+    gen.add_argument("--pace", choices=["relaxed", "normal", "packed"], default="normal")
+    gen.add_argument("--max-transit", dest="max_transit_min", type=int, default=45)
+    gen.add_argument("--start-place", dest="start_place", default="")
+    gen.add_argument("--out", default="data/plan-generated.json")
+    gen.add_argument("--json", action="store_true")
+    gen.set_defaults(func=cmd_generate)
     return parser
 
 
