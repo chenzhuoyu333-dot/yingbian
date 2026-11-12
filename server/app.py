@@ -16,7 +16,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from yingbian import Event, load_plan, propagate, repair
-from yingbian.models import PlanError
+from yingbian.generate import Preferences, generate
+from yingbian.models import Plan, PlanError
 from yingbian.repair import apply_actions
 from yingbian.weather import fetch_weather
 
@@ -71,6 +72,7 @@ pre{background:#f5f5f5;padding:14px;border-radius:8px;overflow:auto;max-height:5
   <button onclick="applyB()">5 应用方案 B</button>
   <button onclick="go('POST','/api/plan/__PLAN__/undo',{})">6 撤销</button>
   <button onclick="go('GET','/api/weather?lat=30.27&lng=120.15')">7 天气</button>
+  <button onclick="go('POST','/api/generate',{city:'杭州',interests:['景点','公园','咖啡'],mustVisit:['清河坊历史文化特色街区'],pace:'normal',maxTransitMin:45})">9 生成行程</button>
   <button onclick="go('POST','/api/reset',{})">8 重置</button>
 </div>
 <pre id="out">点上面任意按钮</pre>
@@ -121,6 +123,50 @@ async def plan_error_handler(_, exc: PlanError):
 @app.get("/", response_class=HTMLResponse)
 def index():
     return INDEX_HTML.replace("__PLAN__", BASE.plan_id)
+
+
+@app.post("/api/generate")
+def post_generate(body: dict = Body(...)):
+    """
+    按偏好生成一份行程，并直接注册进计划表 —— 生成完就能发事件、求方案、应用、撤销。
+
+    请求体（全部可选，缺省用默认值）：
+      {"city":"杭州","date":"2026-11-14","startTime":"09:30","endTime":"20:00",
+       "interests":["景点","公园","咖啡"],"mustVisit":["清河坊历史文化特色街区"],
+       "avoid":["爬山"],"pace":"normal","maxTransitMin":45,"startPlace":""}
+
+    为什么要注册进来：生成不是终点。用户看到行程后马上要能"下雨了怎么办"，
+    所以生成的计划必须和内置计划享受同一套 /event、/repair、/apply、/undo。
+    """
+    try:
+        prefs = Preferences(
+            city=str(body.get("city") or "杭州"),
+            date=str(body.get("date") or "2026-11-14"),
+            start_time=str(body.get("startTime") or "09:30"),
+            end_time=str(body.get("endTime") or "20:00"),
+            interests=list(body.get("interests") or []),
+            must_visit=list(body.get("mustVisit") or []),
+            avoid=list(body.get("avoid") or []),
+            pace=str(body.get("pace") or "normal"),
+            max_transit_min=int(body.get("maxTransitMin") or 45),
+            start_place=str(body.get("startPlace") or ""),
+        )
+        raw_plan = generate(prefs)
+    except Exception as exc:  # 没配 Key / 搜不到地点 / 网络失败，都给出可读原因
+        return _error("GENERATE_FAILED", str(exc))
+
+    parsed = Plan.from_dict(raw_plan)
+    PLANS[parsed.plan_id] = parsed.clone()
+    VERSIONS[parsed.plan_id] = [parsed.clone()]
+
+    return _ok(
+        {
+            "plan": parsed.to_dict(),
+            "version": 1,
+            "generation": raw_plan.get("generation", {}),
+            "hint": f"接下来可以 POST /api/plan/{parsed.plan_id}/event 试试下雨",
+        }
+    )
 
 
 @app.post("/api/reset")
