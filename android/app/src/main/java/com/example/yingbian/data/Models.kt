@@ -92,6 +92,22 @@ data class RepairResult(
     val message: String,
 )
 
+/**
+ * 生成行程的偏好。字段名与后端 /api/generate 的请求体一一对应。
+ * 全部有默认值，界面上只需要改用户关心的几项。
+ */
+data class GeneratePrefs(
+    val city: String = "杭州",
+    val date: String = "2026-11-14",
+    val startTime: String = "09:30",
+    val endTime: String = "20:00",
+    val interests: List<String> = listOf("景点", "公园", "咖啡"),
+    val mustVisit: List<String> = emptyList(),
+    val avoid: List<String> = emptyList(),
+    val pace: String = "normal",
+    val maxTransitMin: Int = 45,
+)
+
 data class Weather(
     val source: String,
     val fetchedAt: String,

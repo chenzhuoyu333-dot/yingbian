@@ -1,6 +1,8 @@
 package com.example.yingbian.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,11 +27,16 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -37,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.yingbian.data.GeneratePrefs
 import com.example.yingbian.data.Impact
 import com.example.yingbian.data.Plan
 import com.example.yingbian.data.PlanNode
@@ -544,4 +552,168 @@ private fun DebugAction(label: String, onClick: () -> Unit) {
     TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Text(label, fontSize = 13.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Start)
     }
+}
+
+/**
+ * 按偏好生成行程。
+ *
+ * 只做输入，不做排程 —— 排程在后端（Python 的 generate.py），
+ * 这样"为什么这样排"有唯一一处可解释的实现，App 只负责把偏好送出去、把结果画出来。
+ */
+@Composable
+fun GenerateDialog(
+    initial: GeneratePrefs,
+    busy: Boolean,
+    error: String?,
+    onGenerate: (GeneratePrefs) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var city by remember { mutableStateOf(initial.city) }
+    var date by remember { mutableStateOf(initial.date) }
+    var start by remember { mutableStateOf(initial.startTime) }
+    var end by remember { mutableStateOf(initial.endTime) }
+    var interests by remember { mutableStateOf(initial.interests.joinToString("、")) }
+    var mustVisit by remember { mutableStateOf(initial.mustVisit.joinToString("、")) }
+    var avoid by remember { mutableStateOf(initial.avoid.joinToString("、")) }
+    var pace by remember { mutableStateOf(initial.pace) }
+    var maxTransit by remember { mutableStateOf(initial.maxTransitMin.toString()) }
+
+    fun split(text: String): List<String> =
+        text.split("、", ",", "，", " ")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("按偏好生成行程") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    text = "地点来自高德 POI 检索，停留时长为经验值，通勤为估算 —— 生成后每个都会标「待确认」，请自己过一遍。",
+                    fontSize = 11.sp,
+                    color = Muted,
+                )
+                Spacer(Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = city,
+                    onValueChange = { city = it },
+                    label = { Text("城市") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = date,
+                        onValueChange = { date = it },
+                        label = { Text("日期") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = start,
+                        onValueChange = { start = it },
+                        label = { Text("几点出发") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedTextField(
+                        value = end,
+                        onValueChange = { end = it },
+                        label = { Text("几点结束") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = interests,
+                    onValueChange = { interests = it },
+                    label = { Text("想去的类型（用、分隔）") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = mustVisit,
+                    onValueChange = { mustVisit = it },
+                    label = { Text("必去地点名（会被锁定）") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = avoid,
+                    onValueChange = { avoid = it },
+                    label = { Text("不想要的（如 爬山）") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(10.dp))
+
+                Text("节奏", fontSize = 12.sp, color = Muted)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("relaxed" to "轻松", "normal" to "适中", "packed" to "紧凑").forEach { (value, label) ->
+                        val picked = pace == value
+                        OutlinedButton(
+                            onClick = { pace = value },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(
+                                text = label,
+                                fontSize = 12.sp,
+                                fontWeight = if (picked) FontWeight.Bold else FontWeight.Normal,
+                                color = if (picked) Ink else Muted,
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = maxTransit,
+                    onValueChange = { maxTransit = it.filter { ch -> ch.isDigit() } },
+                    label = { Text("相邻两站最多走几分钟") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                if (!error.isNullOrBlank()) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(text = "生成失败：$error", fontSize = 12.sp, color = ConflictOrange)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onGenerate(
+                        GeneratePrefs(
+                            city = city.trim().ifBlank { "杭州" },
+                            date = date.trim().ifBlank { "2026-11-14" },
+                            startTime = start.trim().ifBlank { "09:30" },
+                            endTime = end.trim().ifBlank { "20:00" },
+                            interests = split(interests).ifEmpty { listOf("景点", "公园", "咖啡") },
+                            mustVisit = split(mustVisit),
+                            avoid = split(avoid),
+                            pace = pace,
+                            maxTransitMin = maxTransit.toIntOrNull() ?: 45,
+                        ),
+                    )
+                },
+                enabled = !busy,
+            ) {
+                Text(if (busy) "生成中…" else "生成")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
 }

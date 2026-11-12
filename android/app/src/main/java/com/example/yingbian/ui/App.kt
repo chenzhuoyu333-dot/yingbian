@@ -43,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.example.yingbian.data.ApiConfig
 import com.example.yingbian.data.ApiSettings
+import com.example.yingbian.data.GeneratePrefs
 import com.example.yingbian.data.createRepository
 import kotlinx.coroutines.launch
 
@@ -56,6 +57,7 @@ fun YingBianRoot() {
     val scope = rememberCoroutineScope()
     var debugOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var generateOpen by remember { mutableStateOf(false) }
 
     LaunchedEffect(repoVersion) { controller.load() }
 
@@ -86,6 +88,9 @@ fun YingBianRoot() {
                     }
                 },
                 actions = {
+                    TextButton(onClick = { generateOpen = true }) {
+                        Text("生成行程", fontSize = 13.sp)
+                    }
                     if ((controller.plan?.version ?: 1) > 1) {
                         TextButton(onClick = { scope.launch { controller.undo() } }) {
                             Text("撤销", fontSize = 13.sp)
@@ -188,6 +193,28 @@ fun YingBianRoot() {
             message = message,
             onUnlock = { scope.launch { controller.unlockAndRepair() } },
             onKeep = { controller.dismissBlocked() },
+        )
+    }
+
+    if (generateOpen) {
+        GenerateDialog(
+            initial = remember { GeneratePrefs() },
+            busy = controller.loading,
+            error = controller.error,
+            onGenerate = { prefs ->
+                scope.launch {
+                    controller.generate(prefs)
+                    if (controller.error == null) {
+                        generateOpen = false
+                        val note = controller.generateNote
+                        if (!note.isNullOrBlank()) {
+                            Toast.makeText(context, note, Toast.LENGTH_SHORT).show()
+                        }
+                        controller.clearGenerateNote()
+                    }
+                }
+            },
+            onDismiss = { generateOpen = false },
         )
     }
 

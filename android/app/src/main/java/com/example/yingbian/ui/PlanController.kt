@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.example.yingbian.data.Impact
 import com.example.yingbian.data.DemoScenario
+import com.example.yingbian.data.GeneratePrefs
 import com.example.yingbian.data.Plan
 import com.example.yingbian.data.PlanRepository
 import com.example.yingbian.data.RepairAction
@@ -72,6 +73,9 @@ class PlanController(private val repo: PlanRepository) {
         private set
     var eventTitle by mutableStateOf("降雨 15:00–17:00")
         private set
+    /** 生成后的提示（例如"必去点排不进去"），界面上用 Toast 或角标展示 */
+    var generateNote by mutableStateOf<String?>(null)
+        private set
     private var planBeforeApply: Plan? = null
     private var scenario = DemoScenario.RAIN
 
@@ -115,6 +119,45 @@ class PlanController(private val repo: PlanRepository) {
         } finally {
             loading = false
         }
+    }
+
+    /** 按偏好生成一份行程；成功后直接回到计划图屏 */
+    suspend fun generate(prefs: GeneratePrefs) {
+        loading = true
+        error = null
+        empty = false
+        offline = false
+        generateNote = null
+        try {
+            plan = repo.generate(prefs)
+            impact = null
+            schemes = emptyList()
+            selectedSchemeId = null
+            notifications = emptyList()
+            notificationSelection = emptySet()
+            todos = emptyList()
+            todoDone = emptySet()
+            lastScheme = null
+            planBeforeApply = null
+            scenario = DemoScenario.RAIN
+            eventTitle = "降雨 15:00–17:00"
+            showImpact = false
+            blockedMessage = null
+            blockedNode = null
+            screen = AppScreen.Plan
+            weather = runCatching { repo.weather() }.getOrNull()
+            generateNote = "已生成 ${plan?.nodes?.size ?: 0} 个节点，其中 ${
+                plan?.nodes?.count { it.confirmed } ?: 0
+            } 个已锁定"
+        } catch (exception: Exception) {
+            error = exception.message ?: "生成失败"
+        } finally {
+            loading = false
+        }
+    }
+
+    fun clearGenerateNote() {
+        generateNote = null
     }
 
     suspend fun loadSchemes() {

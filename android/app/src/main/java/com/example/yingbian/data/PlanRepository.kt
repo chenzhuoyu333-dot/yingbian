@@ -12,6 +12,8 @@ import java.net.URL
 
 interface PlanRepository {
     suspend fun loadPlan(): Plan
+    /** 按偏好生成一份新行程（后端 /api/generate） */
+    suspend fun generate(prefs: GeneratePrefs): Plan
     suspend fun sendEvent(scenario: DemoScenario = DemoScenario.RAIN): Impact
     suspend fun repair(scenario: DemoScenario = DemoScenario.RAIN): RepairResult
     suspend fun applyScheme(scheme: RepairScheme): Plan
@@ -46,6 +48,21 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
         return current ?: PlanJson
             .parsePlan(readAsset("plan-saturday.json").getJSONObject("data").getJSONObject("plan"))
             .also { current = it }
+    }
+
+    /**
+     * 离线模式下没有 POI 检索能力，所以生成只能拿内置示例顶替。
+     * 界面上要靠 plan.source/note 让用户看出"这不是真生成"。
+     */
+    override suspend fun generate(prefs: GeneratePrefs): Plan {
+        delay(600)
+        history.clear()
+        blockedMode = false
+        val loaded = PlanJson.parsePlan(
+            readAsset("plan-saturday.json").getJSONObject("data").getJSONObject("plan"),
+        )
+        current = loaded
+        return loaded
     }
 
     override suspend fun sendEvent(scenario: DemoScenario): Impact {
@@ -112,7 +129,14 @@ class RemotePlanRepository(
     private val settings: ApiSettings,
 ) : PlanRepository {
     private val prefs = context.getSharedPreferences("yingbian_cache", Context.MODE_PRIVATE)
-    private val planId = "p_sat_guzhen"
+
+    /**
+     * 当前正在操作的计划 id。
+     * 生成行程后会变（后端返回 p_generated），之后的 /event /repair /apply /undo
+     * 都必须打到新计划上，否则会去改内置的那份，演示就串了。
+     */
+    @Volatile
+    private var planId = "p_sat_guzhen"
 
     private fun rainBody(): JSONObject = JSONObject()
         .put("type", "rain")
@@ -166,6 +190,26 @@ class RemotePlanRepository(
     override suspend fun loadPlan(): Plan {
         val data = request("GET", "/api/plan/$planId")
         val raw = data.getJSONObject("plan")
+        savePlan(raw)
+        return PlanJson.parsePlan(raw)
+    }
+
+    override suspend fun generate(prefs: GeneratePrefs): Plan {
+        val body = JSONObject()
+            .put("city", prefs.city)
+            .put("date", prefs.date)
+            .put("startTime", prefs.startTime)
+            .put("endTime", prefs.endTime)
+            .put("interests", JSONArray(prefs.interests))
+            .put("mustVisit", JSONArray(prefs.mustVisit))
+            .put("avoid", JSONArray(prefs.avoid))
+            .put("pace", prefs.pace)
+            .put("maxTransitMin", prefs.maxTransitMin)
+
+        val data = request("POST", "/api/generate", body)
+        val raw = data.getJSONObject("plan")
+        // 切到新生成的计划：后面所有请求都要打到它身上
+        planId = raw.optString("planId", planId).ifBlank { planId }
         savePlan(raw)
         return PlanJson.parsePlan(raw)
     }
