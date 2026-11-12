@@ -29,6 +29,7 @@
   LLM_API_KEY=sk-xxxx
   LLM_BASE_URL=https://api.deepseek.com/v1     # 任何 OpenAI 兼容端点都行
   LLM_MODEL=deepseek-chat
+  LLM_PROXY=http://127.0.0.1:7897              # 只有访问境外模型才需要
 """
 
 from __future__ import annotations
@@ -50,7 +51,13 @@ def _http_post(url: str, headers: dict, payload: dict, timeout: int) -> dict:
     """唯一的网络出口 —— 测试里 mock 它就不会真的调模型"""
     import httpx
 
-    response = httpx.post(url, headers=headers, json=payload, timeout=timeout)
+    # 环境里可能有占位代理（127.0.0.1:9）。默认直连；
+    # 访问境外模型时在 .env 里设 LLM_PROXY 显式走代理。
+    proxy = key("LLM_PROXY")
+    options = {"trust_env": False}
+    if proxy:
+        options["proxy"] = proxy
+    response = httpx.post(url, headers=headers, json=payload, timeout=timeout, **options)
     response.raise_for_status()
     return response.json()
 
