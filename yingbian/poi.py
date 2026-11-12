@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import gzip
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -129,10 +130,17 @@ def _throttle() -> None:
     _last_call_at = time.time()
 
 
+# 高德是国内直连接口；绕过环境里的 HTTP(S)_PROXY（本机常见占位值 127.0.0.1:9）
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def _http_json(url: str) -> dict:
     """唯一的网络出口 —— 测试里 mock 这一个函数就不会发真实请求"""
-    with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as response:
-        return json.loads(response.read().decode("utf-8"))
+    with _OPENER.open(url, timeout=TIMEOUT_SECONDS) as response:
+        raw = response.read()
+    if raw[:2] == b"\x1f\x8b":
+        raw = gzip.decompress(raw)
+    return json.loads(raw.decode("utf-8"))
 
 
 def _get_with_retry(url: str, attempts: int = 3) -> dict:

@@ -57,10 +57,7 @@ class WeatherTest(unittest.TestCase):
 
     def test_qweather_when_host_and_key_present(self):
         with env(QWEATHER_HOST=QWEATHER_HOST, QWEATHER_KEY="test-key"):
-            with patch(
-                "yingbian.weather.urllib.request.urlopen",
-                return_value=_FakeResponse(HOURLY),
-            ) as mocked:
+            with patch("yingbian.weather._get_json", return_value=HOURLY) as mocked:
                 data = fetch_weather("30.27", "120.15")
         self.assertFalse(data["isDemo"])
         self.assertEqual(data["source"], "和风天气")
@@ -72,7 +69,7 @@ class WeatherTest(unittest.TestCase):
     def test_qweather_needs_host(self):
         """只有 Key 没有专属 Host 时，不能去调公共域名（会 403）"""
         with env(QWEATHER_KEY="test-key"):
-            with patch("yingbian.weather.urllib.request.urlopen") as mocked:
+            with patch("yingbian.weather._get_json") as mocked:
                 data = fetch_weather("30.27", "120.15")
         self.assertTrue(data["isDemo"])
         mocked.assert_not_called()
@@ -80,11 +77,11 @@ class WeatherTest(unittest.TestCase):
     def test_amap_fallback_when_only_amap_key(self):
         payloads = [RE_GEO, AMAP_WEATHER]
 
-        def fake_urlopen(url, timeout=None):
-            return _FakeResponse(payloads.pop(0))
+        def fake_json(url):
+            return payloads.pop(0)
 
         with env(AMAP_KEY="amap-key"):
-            with patch("yingbian.weather.urllib.request.urlopen", side_effect=fake_urlopen) as mocked:
+            with patch("yingbian.weather._get_json", side_effect=fake_json) as mocked:
                 data = fetch_weather("30.27", "120.15")
 
         self.assertFalse(data["isDemo"])
@@ -100,8 +97,8 @@ class WeatherTest(unittest.TestCase):
 
         with env(AMAP_KEY="amap-key"):
             with patch(
-                "yingbian.weather.urllib.request.urlopen",
-                side_effect=lambda url, timeout=None: _FakeResponse(payloads.pop(0)),
+                "yingbian.weather._get_json",
+                side_effect=lambda url: payloads.pop(0),
             ):
                 data = fetch_weather()
         self.assertEqual(data["next2hRainProb"], 0.1)
@@ -110,22 +107,22 @@ class WeatherTest(unittest.TestCase):
     def test_qweather_failure_falls_back_to_amap(self):
         """和风挂了要用高德顶上，而不是直接降级成演示数据"""
 
-        def pick(url, timeout=None):
+        def pick(url):
             if QWEATHER_HOST in url:
                 raise OSError("qweather down")
             if "regeo" in url:
-                return _FakeResponse(RE_GEO)
-            return _FakeResponse(AMAP_WEATHER)
+                return RE_GEO
+            return AMAP_WEATHER
 
         with env(QWEATHER_HOST=QWEATHER_HOST, QWEATHER_KEY="k", AMAP_KEY="a"):
-            with patch("yingbian.weather.urllib.request.urlopen", side_effect=pick):
+            with patch("yingbian.weather._get_json", side_effect=pick):
                 data = fetch_weather()
         self.assertFalse(data["isDemo"])
         self.assertEqual(data["source"], "高德天气")
 
     def test_all_providers_fail_gives_honest_demo(self):
         with env(QWEATHER_HOST=QWEATHER_HOST, QWEATHER_KEY="k", AMAP_KEY="a"):
-            with patch("yingbian.weather.urllib.request.urlopen", side_effect=OSError("boom")):
+            with patch("yingbian.weather._get_json", side_effect=OSError("boom")):
                 data = fetch_weather()
         self.assertTrue(data["isDemo"])
         self.assertIn("获取失败", data["source"])

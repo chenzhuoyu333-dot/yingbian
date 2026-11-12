@@ -19,6 +19,7 @@ exist so demo data can never pretend to be a real forecast.
 from __future__ import annotations
 
 import json
+import gzip
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -50,10 +51,18 @@ def _demo(reason: str, fetched_at: str, lat: str, lng: str) -> dict[str, object]
     }
 
 
+# 和风/高德都是国内直连接口；绕过环境里的 HTTP(S)_PROXY（本机常见占位值 127.0.0.1:9）
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 def _get_json(url: str) -> dict:
     """唯一的网络出口 —— 测试里只 mock 这一个函数，就不会真发请求"""
-    with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as response:
-        return json.loads(response.read().decode("utf-8"))
+    with _OPENER.open(url, timeout=TIMEOUT_SECONDS) as response:
+        raw = response.read()
+    # 和风会返回 gzip，不解压会直接 UnicodeDecodeError
+    if raw[:2] == b"\x1f\x8b":
+        raw = gzip.decompress(raw)
+    return json.loads(raw.decode("utf-8"))
 
 
 # ── 一级：和风（有逐小时降水概率）─────────────────────────────
