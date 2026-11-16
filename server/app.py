@@ -22,6 +22,7 @@ from yingbian.ai import (
     parse_event as ai_parse_event,
     parse_preferences as ai_parse_preferences,
 )
+from yingbian.collab import SCHEMES, STATE as COLLAB
 from yingbian.generate import Preferences, generate
 from yingbian.models import Plan, PlanError
 from yingbian.repair import apply_actions
@@ -251,14 +252,136 @@ def get_plan(plan_id: str):
     return _ok({"plan": plan.to_dict(), "version": plan.version})
 
 
+def _member_of(plan_id: str, body: dict):
+    """从请求体里取成员；没有就返回 (None, 错误响应)"""
+    member_id = str(body.get("memberId") or "").strip()
+    if not member_id:
+        return None, _error("NO_MEMBER", "缺少 memberId：多人协作要先加入行程")
+    member = COLLAB.member(plan_id, member_id)
+    if member is None:
+        return None, _error("NOT_JOINED", "你还没加入这次行程，请先调用 members 加入")
+    return member, None
+
+
+def _version_guard(plan, body: dict):
+    """
+    乐观锁：客户端带上它看到的版本号，对不上就拒绝，防止两人同改时悄悄覆盖。
+    """
+    expected = body.get("expectedVersion")
+    if expected is None:
+        return None
+    try:
+        expected = int(expected)
+    except (TypeError, ValueError):
+        return _error("BAD_VERSION", "expectedVersion 必须是整数")
+    if expected != plan.version:
+        return _error(
+            "VERSION_CONFLICT",
+            f"计划已被别人改到 v{plan.version}（你看到的是 v{expected}），请刷新后再操作",
+            409,
+        )
+    return None
+
+
+@app.post("/api/plan/{plan_id}/members")
+def post_member(plan_id: str, body: dict = Body(...)):
+    """加入这次行程（可重复调用，幂等）"""
+    if _plan_or_404(plan_id) is None:
+        return _error("NOT_FOUND", "计划不存在", 404)
+    member_id = str(body.get("memberId") or "").strip()
+    if not member_id:
+        return _error("NO_MEMBER", "缺少 memberId")
+    member = COLLAB.join(plan_id, member_id, str(body.get("name") or ""))
+    return _ok({"member": member.to_dict(), "members": [m.to_dict() for m in COLLAB.roster(plan_id)]})
+
+
+@app.get("/api/plan/{plan_id}/members")
+def get_members(plan_id: str):
+    return _ok({"members": [m.to_dict() for m in COLLAB.roster(plan_id)]})
+
+
+@app.get("/api/plan/{plan_id}/activity")
+def get_activity(plan_id: str):
+    """谁在什么时候改了什么 —— 替代群聊刷屏"""
+    return _ok({"activity": COLLAB.feed(plan_id)})
+
+
+@app.post("/api/plan/{plan_id}/vote/start")
+def post_vote_start(plan_id: str, body: dict = Body(...)):
+    """
+    发起投票。影响大的变化不该由"谁手快"决定，而是少数服从多数 + 超时兜底。
+    """
+    plan = _plan_or_404(plan_id)
+    if plan is None:
+        return _error("NOT_FOUND", "计划不存在", 404)
+    member, err = _member_of(plan_id, body)
+    if err is not None:
+        return err
+    event = body.get("event") or {}
+    round_ = COLLAB.start_vote(
+        plan_id,
+        event,
+        ttl_sec=int(body.get("ttlSec") or 300),
+        default_scheme=str(body.get("defaultScheme") or "B"),
+        initiator=member,
+    )
+    return _ok(round_.to_dict())
+
+
+@app.post("/api/plan/{plan_id}/vote")
+def post_vote(plan_id: str, body: dict = Body(...)):
+    """投一票"""
+    if _plan_or_404(plan_id) is None:
+        return _error("NOT_FOUND", "计划不存在", 404)
+    member_id = str(body.get("memberId") or "").strip()
+    scheme = str(body.get("schemeId") or body.get("scheme") or "").upper()
+    if scheme and scheme not in SCHEMES:
+        return _error("BAD_SCHEME", f"只能投 {'/'.join(SCHEMES)}")
+    round_, message = COLLAB.cast_vote(plan_id, member_id, scheme)
+    if round_ is None:
+        return _error("NO_VOTE", message)
+    if message:
+        return _error("VOTE_REJECTED", message, 409)
+    return _ok(round_.to_dict())
+
+
+@app.get("/api/plan/{plan_id}/vote")
+def get_vote(plan_id: str):
+    round_ = COLLAB.current_vote(plan_id)
+    if round_ is None:
+        return _ok({"vote": None})
+    return _ok({"vote": round_.to_dict(), "members": [m.to_dict() for m in COLLAB.roster(plan_id)]})
+
+
 @app.post("/api/plan/{plan_id}/event")
 def post_event(plan_id: str, body: dict = Body(...)):
     plan = _plan_or_404(plan_id)
     if plan is None:
         return _error("NOT_FOUND", "计划不存在", 404)
+    member_id = str(body.get("memberId") or "").strip()
+    if member_id:
+        member = COLLAB.member(plan_id, member_id)
+        if member is not None:
+            COLLAB.record(
+                plan_id,
+                member.id,
+                member.name,
+                f"{member.name} 提出变化：{_describe_event(body)}",
+            )
     event = Event.from_dict(body)
     report = propagate(plan, event)
     return _ok(report.to_dict())
+
+
+def _describe_event(body: dict) -> str:
+    kind = str(body.get("type") or "")
+    if kind == "rain":
+        return f"{body.get('from', '?')}–{body.get('to', '?')} 降雨"
+    if kind == "delay":
+        return f"{body.get('nodeId', '')} 延后 {body.get('minutes', 0)} 分钟"
+    if kind == "cancel":
+        return f"{body.get('nodeId', '')} 取消"
+    return kind or "未知变化"
 
 
 @app.post("/api/plan/{plan_id}/repair")
@@ -291,11 +414,26 @@ def post_apply(plan_id: str, body: dict = Body(...)):
     plan = _plan_or_404(plan_id)
     if plan is None:
         return _error("NOT_FOUND", "计划不存在", 404)
+
+    # 多人同时改时，宁可让后到的那个人刷新一次，也不要悄悄覆盖别人的改动
+    conflict = _version_guard(plan, body)
+    if conflict is not None:
+        return conflict
+
     actions = body.get("actions") or []
     new_plan = apply_actions(plan, actions)
     new_plan.version = len(VERSIONS[plan_id]) + 1
     PLANS[plan_id] = new_plan
     VERSIONS[plan_id].append(new_plan.clone())
+
+    member = COLLAB.member(plan_id, str(body.get("memberId") or "").strip())
+    if member is not None:
+        COLLAB.record(
+            plan_id,
+            member.id,
+            member.name,
+            f"{member.name} 应用了方案（v{new_plan.version}，改了 {len(actions)} 处）",
+        )
     return _ok({"plan": new_plan.to_dict(), "version": new_plan.version})
 
 
