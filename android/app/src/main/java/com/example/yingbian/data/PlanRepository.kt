@@ -22,6 +22,18 @@ interface PlanRepository {
     suspend fun reset(): Plan
     suspend fun weather(): Weather
     fun cachedPlan(): Plan?
+
+    // ── 多人协作 ──────────────────────────────────
+    /** 加入行程（幂等），返回当前成员列表 */
+    suspend fun join(): List<MemberInfo>
+    /** 当前投票轮次；没有进行中的投票返回 null */
+    suspend fun voteState(): VoteState?
+    /** 发起投票（影响大的变化不该由谁手快决定） */
+    suspend fun startVote(defaultScheme: String = "B", ttlSec: Int = 300): VoteState
+    /** 投一票 */
+    suspend fun castVote(schemeId: String): VoteState
+    /** 谁在什么时候改了什么 */
+    suspend fun activity(): List<ActivityRow>
 }
 
 enum class DemoScenario { RAIN, CANCEL_LUNCH }
@@ -112,6 +124,20 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
         return PlanJson.parseWeather(readAsset("weather.json").getJSONObject("data"))
     }
 
+    // 离线模式没有后端，多人协作不可用。这里如实报错，
+    // 不返回假数据 —— 否则演示时会以为投票成功了。
+    override suspend fun join(): List<MemberInfo> = emptyList()
+
+    override suspend fun voteState(): VoteState? = null
+
+    override suspend fun startVote(defaultScheme: String, ttlSec: Int): VoteState =
+        throw IOException("离线模式不支持多人协作，请连上后端")
+
+    override suspend fun castVote(schemeId: String): VoteState =
+        throw IOException("离线模式不支持多人协作，请连上后端")
+
+    override suspend fun activity(): List<ActivityRow> = emptyList()
+
     override suspend fun reset(): Plan {
         history.clear()
         blockedMode = false
@@ -138,6 +164,10 @@ class RemotePlanRepository(
     @Volatile
     private var planId = "p_sat_guzhen"
 
+    /** 客户端看到的最新版本号，apply 时作为 expectedVersion 发回去 */
+    @Volatile
+    private var planVersion = 1
+
     private fun rainBody(): JSONObject = JSONObject()
         .put("type", "rain")
         .put("from", "15:00")
@@ -148,8 +178,10 @@ class RemotePlanRepository(
         .put("type", "cancel")
         .put("nodeId", "n_lunch")
 
-    private fun eventBody(scenario: DemoScenario): JSONObject =
-        if (scenario == DemoScenario.CANCEL_LUNCH) cancelBody() else rainBody()
+    private fun eventBody(scenario: DemoScenario): JSONObject {
+        val body = if (scenario == DemoScenario.CANCEL_LUNCH) cancelBody() else rainBody()
+        return body.put("memberId", settings.memberId)
+    }
 
     private suspend fun request(
         method: String,
@@ -191,6 +223,7 @@ class RemotePlanRepository(
         val data = request("GET", "/api/plan/$planId")
         val raw = data.getJSONObject("plan")
         savePlan(raw)
+        planVersion = raw.optInt("version", data.optInt("version", 1))
         return PlanJson.parsePlan(raw)
     }
 
@@ -235,7 +268,12 @@ class RemotePlanRepository(
                     .put("sacrifice", action.sacrifice),
             )
         }
-        val body = JSONObject().put("schemeId", scheme.id).put("actions", actions)
+        val body = JSONObject()
+            .put("schemeId", scheme.id)
+            .put("actions", actions)
+            .put("memberId", settings.memberId)
+            // 乐观锁：带上我看到的那一版；别人已经改过就会被后端拒绝并提示刷新
+            .put("expectedVersion", planVersion)
         val data = request("POST", "/api/plan/$planId/apply", body)
         val raw = data.getJSONObject("plan")
         savePlan(raw)
@@ -262,6 +300,39 @@ class RemotePlanRepository(
 
     override suspend fun weather(): Weather =
         PlanJson.parseWeather(request("GET", "/api/weather?lat=30.1&lng=120.2"))
+
+    // ── 多人协作 ──────────────────────────────────
+    override suspend fun join(): List<MemberInfo> {
+        val body = JSONObject()
+            .put("memberId", settings.memberId)
+            .put("name", settings.memberName)
+        return PlanJson.parseMembers(request("POST", "/api/plan/$planId/members", body))
+    }
+
+    override suspend fun voteState(): VoteState? {
+        val data = request("GET", "/api/plan/$planId/vote")
+        val vote = data.optJSONObject("vote") ?: return null
+        return PlanJson.parseVote(vote)
+    }
+
+    override suspend fun startVote(defaultScheme: String, ttlSec: Int): VoteState {
+        val body = JSONObject()
+            .put("memberId", settings.memberId)
+            .put("event", eventBody(DemoScenario.RAIN))
+            .put("defaultScheme", defaultScheme)
+            .put("ttlSec", ttlSec)
+        return PlanJson.parseVote(request("POST", "/api/plan/$planId/vote/start", body))
+    }
+
+    override suspend fun castVote(schemeId: String): VoteState {
+        val body = JSONObject()
+            .put("memberId", settings.memberId)
+            .put("schemeId", schemeId)
+        return PlanJson.parseVote(request("POST", "/api/plan/$planId/vote", body))
+    }
+
+    override suspend fun activity(): List<ActivityRow> =
+        PlanJson.parseActivity(request("GET", "/api/plan/$planId/activity"))
 
     override suspend fun reset(): Plan = loadPlan()
 

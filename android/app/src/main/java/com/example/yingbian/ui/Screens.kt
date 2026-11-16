@@ -44,11 +44,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.yingbian.data.ActivityRow
 import com.example.yingbian.data.GeneratePrefs
 import com.example.yingbian.data.Impact
+import com.example.yingbian.data.MemberInfo
 import com.example.yingbian.data.Plan
 import com.example.yingbian.data.PlanNode
 import com.example.yingbian.data.RepairScheme
+import com.example.yingbian.data.VoteState
 import com.example.yingbian.data.Weather
 
 @Composable
@@ -62,10 +65,20 @@ fun PlanScreen(
     onRain: () -> Unit,
     onImpact: () -> Unit,
     onSchemes: () -> Unit,
+    onVote: () -> Unit = {},
+    onActivity: () -> Unit = {},
+    memberCount: Int = 0,
+    voteOpen: Boolean = false,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         WeatherCard(weather)
         if (offline) OfflineBanner()
+        CollabBar(
+            memberCount = memberCount,
+            voteOpen = voteOpen,
+            onVote = onVote,
+            onActivity = onActivity,
+        )
         if (plan.unresolvedMustVisit.isNotEmpty() || plan.generationWarnings.isNotEmpty()) {
             GenerateNotice(plan)
         }
@@ -203,6 +216,42 @@ private fun GenerateNotice(plan: Plan) {
                     color = Muted,
                     modifier = Modifier.padding(top = 2.dp),
                 )
+            }
+        }
+    }
+}
+
+/**
+ * 协作条：谁在一起出行、现在有没有在投票。
+ *
+ * 放在天气卡下面而不是藏进设置，因为多人是这件产品的核心之一，
+ * 演示时要一眼能看到"还有谁在"。
+ */
+@Composable
+private fun CollabBar(
+    memberCount: Int,
+    voteOpen: Boolean,
+    onVote: () -> Unit,
+    onActivity: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+        color = Color(0xFFF3F0FF),
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = if (memberCount > 1) "$memberCount 人同行" else "单人演示",
+                fontSize = 11.sp,
+                color = Muted,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onActivity) { Text("协作记录", fontSize = 11.sp) }
+            TextButton(onClick = onVote) {
+                Text(if (voteOpen) "投票中…" else "发起投票", fontSize = 11.sp)
             }
         }
     }
@@ -586,6 +635,133 @@ fun DebugDialog(
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("关闭") }
         },
+    )
+}
+
+/**
+ * 投票面板：影响大的变化不该由"谁手快"决定。
+ *
+ * 显示票数、剩余时间、我投了哪个，结束后显示结论与判定方式
+ * （全员已投 / 超时兜底 / 平票兜底）——判定方式必须让用户看得见，
+ * 否则"为什么是这个方案"又要吵一轮。
+ */
+@Composable
+fun VoteSheet(
+    vote: VoteState,
+    memberName: String,
+    members: List<MemberInfo>,
+    onVote: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val label = mapOf("A" to "保时间", "B" to "保体验", "C" to "保少改动")
+    val myVote = vote.votes.entries.firstOrNull { it.value.isNotBlank() }?.value
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(if (vote.isOpen) "投票决定怎么改" else "投票已结束")
+        },
+        text = {
+            Column {
+                Text(vote.event, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                Text(
+                    text = "已投 ${vote.totalVotes}/${members.size} 人" +
+                        if (vote.isOpen) " · 剩余 ${vote.remainingSec} 秒" else "",
+                    fontSize = 11.sp,
+                    color = Muted,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+                Spacer(Modifier.height(10.dp))
+
+                vote.options.forEach { option ->
+                    val count = vote.tally[option] ?: 0
+                    val picked = vote.winner == option
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "$option ${label[option] ?: ""}",
+                            fontSize = 12.sp,
+                            fontWeight = if (picked) FontWeight.Bold else FontWeight.Normal,
+                            color = if (picked) OkGreen else Ink,
+                            modifier = Modifier.width(96.dp),
+                        )
+                        Text(
+                            text = "$count 票",
+                            fontSize = 12.sp,
+                            color = if (count > 0) Ink else Muted,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (vote.isOpen) {
+                            OutlinedButton(onClick = { onVote(option) }) {
+                                Text(if (myVote == option) "已投" else "投它", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+
+                if (!vote.isOpen) {
+                    Spacer(Modifier.height(10.dp))
+                    val reason = when (vote.decidedBy) {
+                        "all-voted" -> "全员已投"
+                        "majority" -> "超时按当前票数"
+                        "tie-default" -> "平票，按默认方案"
+                        "timeout-default" -> "超时无人领先，按默认方案"
+                        else -> vote.decidedBy
+                    }
+                    Text(
+                        text = "结论：方案 ${vote.winner ?: "-"} 通过（$reason）",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = OkGreen,
+                    )
+                } else if (myVote == null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("你还没投 —— $memberName", fontSize = 11.sp, color = ConflictOrange)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        },
+    )
+}
+
+/** 活动记录：谁在什么时候改了什么，替代群聊刷屏 */
+@Composable
+fun ActivityDialog(
+    rows: List<ActivityRow>,
+    members: List<MemberInfo>,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("协作记录") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                if (members.isNotEmpty()) {
+                    Text(
+                        text = "参与：${members.joinToString("、") { it.name }}",
+                        fontSize = 11.sp,
+                        color = Muted,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                if (rows.isEmpty()) {
+                    Text("还没有记录", fontSize = 12.sp, color = Muted)
+                }
+                rows.take(20).forEach { row ->
+                    Text(
+                        text = "${row.at.takeLast(5)}  ${row.name}：${row.text}",
+                        fontSize = 11.sp,
+                        color = Ink,
+                        modifier = Modifier.padding(vertical = 2.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
     )
 }
 

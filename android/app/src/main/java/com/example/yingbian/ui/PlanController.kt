@@ -3,13 +3,17 @@ package com.example.yingbian.ui
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.example.yingbian.data.ActivityRow
+import com.example.yingbian.data.ApiSettings
 import com.example.yingbian.data.Impact
 import com.example.yingbian.data.DemoScenario
 import com.example.yingbian.data.GeneratePrefs
+import com.example.yingbian.data.MemberInfo
 import com.example.yingbian.data.Plan
 import com.example.yingbian.data.PlanRepository
 import com.example.yingbian.data.RepairAction
 import com.example.yingbian.data.RepairScheme
+import com.example.yingbian.data.VoteState
 import com.example.yingbian.data.Weather
 
 enum class AppScreen(val label: String) {
@@ -34,7 +38,10 @@ data class TodoRow(
     val script: String,
 )
 
-class PlanController(private val repo: PlanRepository) {
+class PlanController(
+    private val repo: PlanRepository,
+    private val settings: ApiSettings? = null,
+) {
     var plan by mutableStateOf<Plan?>(null)
         private set
     var impact by mutableStateOf<Impact?>(null)
@@ -76,6 +83,80 @@ class PlanController(private val repo: PlanRepository) {
     /** 生成后的提示（例如"必去点排不进去"），界面上用 Toast 或角标展示 */
     var generateNote by mutableStateOf<String?>(null)
         private set
+
+    // ── 多人协作 ──────────────────────────────────
+    var members by mutableStateOf<List<MemberInfo>>(emptyList())
+        private set
+    var vote by mutableStateOf<VoteState?>(null)
+        private set
+    var activityRows by mutableStateOf<List<ActivityRow>>(emptyList())
+        private set
+    /** 别人改了计划时给个提示，让用户知道"这不是我改的" */
+    var remoteChanged by mutableStateOf(false)
+        private set
+
+    val memberName: String
+        get() = settings?.memberName ?: "我"
+
+    /** 进入行程时登记自己（幂等），并拉一次协作状态 */
+    suspend fun joinTrip() {
+        runCatching { members = repo.join() }
+        runCatching { vote = repo.voteState() }
+        runCatching { activityRows = repo.activity() }
+    }
+
+    /**
+     * 轮询：每 3 秒看一次别人的改动。
+     *
+     * 用轮询而不是长连接，是因为演示现场 WiFi 不稳，
+     * 轮询失败最多晚 3 秒，WebSocket 断了要重连、更容易翻车。
+     */
+    suspend fun pollLoop() {
+        while (true) {
+            kotlinx.coroutines.delay(3_000)
+            if (plan == null || loading) continue
+            runCatching {
+                val fresh = repo.loadPlan()
+                if (fresh.version != plan?.version) {
+                    plan = fresh
+                    remoteChanged = true
+                }
+            }
+            runCatching { vote = repo.voteState() }
+            runCatching { activityRows = repo.activity() }
+        }
+    }
+
+    suspend fun startVote() {
+        loading = true
+        error = null
+        try {
+            vote = repo.startVote(defaultScheme = "B", ttlSec = 300)
+            activityRows = runCatching { repo.activity() }.getOrDefault(activityRows)
+        } catch (exception: Exception) {
+            error = exception.message ?: "发起投票失败"
+        } finally {
+            loading = false
+        }
+    }
+
+    suspend fun castVote(schemeId: String) {
+        try {
+            vote = repo.castVote(schemeId)
+            activityRows = runCatching { repo.activity() }.getOrDefault(activityRows)
+        } catch (exception: Exception) {
+            error = exception.message ?: "投票失败"
+        }
+    }
+
+    suspend fun refreshActivity() {
+        runCatching { activityRows = repo.activity() }
+        runCatching { members = repo.join() }
+    }
+
+    fun clearRemoteChanged() {
+        remoteChanged = false
+    }
     private var planBeforeApply: Plan? = null
     private var scenario = DemoScenario.RAIN
 

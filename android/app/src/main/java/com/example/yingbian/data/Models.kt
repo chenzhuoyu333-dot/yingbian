@@ -100,6 +100,39 @@ data class RepairResult(
  * 生成行程的偏好。字段名与后端 /api/generate 的请求体一一对应。
  * 全部有默认值，界面上只需要改用户关心的几项。
  */
+/**
+ * 多人协作：成员。
+ */
+data class MemberInfo(
+    val id: String,
+    val name: String,
+)
+
+/**
+ * 一轮投票。tally 是各方案票数，remainingSec 用来在界面上做倒计时。
+ */
+data class VoteState(
+    val id: String,
+    val event: String,
+    val options: List<String>,
+    val tally: Map<String, Int>,
+    val votes: Map<String, String>,
+    val status: String,
+    val winner: String?,
+    val decidedBy: String,
+    val remainingSec: Int,
+    val defaultScheme: String,
+) {
+    val isOpen: Boolean get() = status == "open"
+    val totalVotes: Int get() = votes.size
+}
+
+data class ActivityRow(
+    val at: String,
+    val name: String,
+    val text: String,
+)
+
 data class GeneratePrefs(
     val city: String = "杭州",
     val date: String = "2026-11-14",
@@ -316,4 +349,64 @@ object PlanJson {
         basis = data.optString("basis", ""),
         note = data.optString("note", ""),
     )
+
+    fun parseVote(raw: JSONObject): VoteState {
+        val tally = linkedMapOf<String, Int>()
+        raw.optJSONObject("tally")?.let { obj ->
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                tally[key] = obj.optInt(key, 0)
+            }
+        }
+        val votes = linkedMapOf<String, String>()
+        raw.optJSONObject("votes")?.let { obj ->
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                votes[key] = obj.optString(key, "")
+            }
+        }
+        val options = raw.optJSONArray("options")?.let { arr ->
+            (0 until arr.length()).map { arr.optString(it, "") }.filter { it.isNotBlank() }
+        } ?: listOf("A", "B", "C")
+
+        val event = raw.optJSONObject("event")
+        val eventText = when {
+            event == null -> "行程变化"
+            event.optString("type") == "rain" ->
+                "${event.optString("from")}–${event.optString("to")} 降雨"
+            event.optString("type") == "delay" ->
+                "延后 ${event.optInt("minutes", 0)} 分钟"
+            event.optString("type") == "cancel" -> "取消一个安排"
+            else -> "行程变化"
+        }
+
+        return VoteState(
+            id = raw.optString("id", ""),
+            event = eventText,
+            options = options,
+            tally = tally,
+            votes = votes,
+            status = raw.optString("status", "open"),
+            winner = raw.optString("winner", "").ifBlank { null },
+            decidedBy = raw.optString("decidedBy", ""),
+            remainingSec = raw.optInt("remainingSec", 0),
+            defaultScheme = raw.optString("defaultScheme", "B"),
+        )
+    }
+
+    fun parseMembers(data: JSONObject): List<MemberInfo> =
+        data.optJSONArray("members")?.objects().orEmpty().map { item ->
+            MemberInfo(id = item.text("id"), name = item.text("name"))
+        }
+
+    fun parseActivity(data: JSONObject): List<ActivityRow> =
+        data.optJSONArray("activity")?.objects().orEmpty().map { item ->
+            ActivityRow(
+                at = item.text("at"),
+                name = item.text("name"),
+                text = item.text("text"),
+            )
+        }
 }

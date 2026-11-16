@@ -33,6 +33,24 @@ class ApiSettings(context: Context) {
     val hasCustomBase: Boolean
         get() = prefs.getString(KEY_BASE, null) != null
 
+    /**
+     * 多人协作的身份。memberId 首次使用时生成并持久化，
+     * 昵称可以在设置页改 —— 演示时一台手机叫"张队长"、另一台叫"李队友"。
+     */
+    val memberId: String
+        get() {
+            val existing = prefs.getString(KEY_MEMBER_ID, null)
+            if (!existing.isNullOrBlank()) return existing
+            val generated = "u_" + java.util.UUID.randomUUID().toString().take(8)
+            prefs.edit().putString(KEY_MEMBER_ID, generated).apply()
+            return generated
+        }
+
+    var memberName: String
+        get() = prefs.getString(KEY_MEMBER_NAME, null)?.takeIf { it.isNotBlank() }
+            ?: ("成员" + memberId.takeLast(2))
+        set(value) = prefs.edit().putString(KEY_MEMBER_NAME, value.trim()).apply()
+
     fun reset() {
         prefs.edit().remove(KEY_BASE).remove(KEY_MOCK).apply()
     }
@@ -49,6 +67,8 @@ class ApiSettings(context: Context) {
     private companion object {
         const val KEY_BASE = "base_url"
         const val KEY_MOCK = "use_mock"
+        const val KEY_MEMBER_ID = "member_id"
+        const val KEY_MEMBER_NAME = "member_name"
     }
 }
 

@@ -53,13 +53,19 @@ fun YingBianRoot() {
     val context = LocalContext.current
     val settings = remember { ApiSettings(context) }
     var repoVersion by remember { mutableIntStateOf(0) }
-    val controller = remember(repoVersion) { PlanController(createRepository(context, settings)) }
+    val controller = remember(repoVersion) { PlanController(createRepository(context, settings), settings) }
     val scope = rememberCoroutineScope()
     var debugOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
     var generateOpen by remember { mutableStateOf(false) }
+    var voteOpen by remember { mutableStateOf(false) }
+    var activityOpen by remember { mutableStateOf(false) }
 
-    LaunchedEffect(repoVersion) { controller.load() }
+    LaunchedEffect(repoVersion) {
+        controller.load()
+        controller.joinTrip()
+        controller.pollLoop()
+    }
 
     BackHandler(enabled = controller.screen != AppScreen.Plan) {
         controller.openScreen(AppScreen.Plan)
@@ -142,6 +148,15 @@ fun YingBianRoot() {
                                 onRain = { scope.launch { controller.simulateRain() } },
                                 onImpact = { controller.openImpact() },
                                 onSchemes = { scope.launch { controller.loadSchemes() } },
+                                onVote = {
+                                    scope.launch {
+                                        controller.startVote()
+                                        voteOpen = true
+                                    }
+                                },
+                                onActivity = { activityOpen = true },
+                                memberCount = controller.members.size,
+                                voteOpen = controller.vote?.isOpen == true,
                             )
 
                             AppScreen.Scheme -> SchemeScreen(
@@ -193,6 +208,29 @@ fun YingBianRoot() {
             message = message,
             onUnlock = { scope.launch { controller.unlockAndRepair() } },
             onKeep = { controller.dismissBlocked() },
+        )
+    }
+
+    if (voteOpen) {
+        val vote = controller.vote
+        if (vote != null) {
+            VoteSheet(
+                vote = vote,
+                memberName = controller.memberName,
+                members = controller.members,
+                onVote = { schemeId -> scope.launch { controller.castVote(schemeId) } },
+                onDismiss = { voteOpen = false },
+            )
+        } else {
+            voteOpen = false
+        }
+    }
+
+    if (activityOpen) {
+        ActivityDialog(
+            rows = controller.activityRows,
+            members = controller.members,
+            onDismiss = { activityOpen = false },
         )
     }
 
