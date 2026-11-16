@@ -95,6 +95,21 @@ def expand_interests(interests: list[str]) -> list[str]:
     return unique
 
 
+def _to_minutes(value: str) -> int | None:
+    """'07:30' → 450；解析失败返回 None"""
+    text = (value or "").strip()
+    if ":" not in text:
+        return None
+    try:
+        hour_s, minute_s = text.split(":", 1)
+        hour, minute = int(hour_s), int(minute_s)
+    except (TypeError, ValueError):
+        return None
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return None
+    return hour * 60 + minute
+
+
 @dataclass
 class Poi:
     id: str
@@ -104,6 +119,39 @@ class Poi:
     lng: float
     lat: float
     stay_min: int
+    # ── 以下来自高德 biz_ext（extensions=all），是"真实店面信息"的来源 ──
+    rating: float = 0.0        # 评分，0 表示高德没给
+    cost: float = 0.0          # 人均，0 表示高德没给
+    open_time: str = ""        # 形如 "07:00-21:00"，空表示没给
+    tel: str = ""
+    tags: list[str] = field(default_factory=list)   # 招牌菜/标签
+    type_text: str = ""
+    address: str = ""
+
+    def open_window(self) -> tuple[int, int] | None:
+        """把营业时间解析成 (开门分钟, 关门分钟)；解析不了返回 None"""
+        if not self.open_time or "-" not in self.open_time:
+            return None
+        left, _, right = self.open_time.partition("-")
+        try:
+            open_min = _to_minutes(left)
+            close_min = _to_minutes(right)
+        except ValueError:
+            return None
+        if open_min is None or close_min is None:
+            return None
+        if close_min <= open_min:   # 跨天营业（如 17:00-02:00），不做校验
+            return None
+        return open_min, close_min
+
+    def data_quality(self) -> str:
+        """数据完整度：决定节点该标 high / medium / low"""
+        filled = sum(1 for v in (self.rating, self.cost, self.open_time) if v)
+        if filled == 3:
+            return "high"
+        if filled >= 1:
+            return "medium"
+        return "low"
     type_text: str = ""
     address: str = ""
 
@@ -165,7 +213,15 @@ def _get_with_retry(url: str, attempts: int = 3) -> dict:
     raise RuntimeError(f"高德请求连续失败：{last_error}")
 
 
-def _classify(type_text: str) -> str:
+def _classify(type_text: str, name: str = "") -> str:
+    # 店名比类型字段更可靠：像 "Ora Coffee" 的 type 是"餐饮服务;餐饮相关场所"，
+    # 只看类型会被归成普通餐厅，于是绕过"一天最多两家咖啡"的限制。
+    lowered = (name or "").lower()
+    if any(word in lowered for word in ("coffee", "cafe", "espresso")):
+        return "cafe"
+    if any(word in (name or "") for word in ("咖啡", "茶馆", "茶室", "茶社")):
+        return "cafe"
+
     for words, category in _CATEGORY_RULES:
         if any(w in type_text for w in words):
             return category
@@ -185,10 +241,24 @@ def _to_poi(raw: dict) -> Poi | None:
         return None
 
     type_text = raw.get("type") or ""
-    category = _classify(type_text)
     name = (raw.get("name") or "").strip()
     if not name:
         return None
+    category = _classify(type_text, name)
+
+    # biz_ext 只有 extensions=all 才返回；缺失就留空，绝不编造默认值
+    biz = raw.get("biz_ext") or {}
+    if not isinstance(biz, dict):
+        biz = {}
+
+    def _num(value) -> float:
+        try:
+            return float(str(value).replace("￥", "").strip())
+        except (TypeError, ValueError):
+            return 0.0
+
+    tag_raw = raw.get("tag") or ""
+    tags = [t.strip() for t in str(tag_raw).split(",") if t.strip()][:6] if tag_raw else []
 
     return Poi(
         id="poi_" + str(raw.get("id") or abs(hash(name)) % 10**8),
@@ -198,6 +268,11 @@ def _to_poi(raw: dict) -> Poi | None:
         lng=lng,
         lat=lat,
         stay_min=_STAY_MIN.get(category, 60),
+        rating=_num(biz.get("rating")),
+        cost=_num(biz.get("cost")),
+        open_time=str(biz.get("open_time") or "").strip(),
+        tel=str(raw.get("tel") or "").strip(),
+        tags=tags,
         type_text=type_text,
         address=(raw.get("address") or ""),
     )
@@ -220,7 +295,7 @@ def search_keyword(city: str, keyword: str, limit: int = MAX_PER_KEYWORD) -> lis
             "citylimit": "true",
             "offset": str(min(limit, 25)),
             "page": "1",
-            "extensions": "base",
+            "extensions": "all",
             "key": amap_key,
         }
     )

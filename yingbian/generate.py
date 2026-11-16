@@ -37,6 +37,28 @@ PACE_FACTOR = {"relaxed": 1.3, "normal": 1.0, "packed": 0.75}
 MAX_NODES = 14
 MEETING_MINUTES = 20  # 集合点默认占用的时间
 
+# 同类地点一天最多几个：不然"咖啡 + 博物馆"会排出四家咖啡馆
+MAX_PER_CATEGORY = {
+    "cafe": 2,
+    "food": 2,
+    "shop": 1,
+    "other": 1,
+    "indoor_sight": 3,
+    "sight": 4,
+}
+
+# 更粗的分组：cafe 和 food 都算"吃喝"，合起来限 3 个。
+# 只按 category 限会被绕过 —— 一家咖啡店如果 type 缺"咖啡"字样就会被归成 food。
+MAX_PER_GROUP = {"eat": 3, "shop": 1, "sight": 4}
+
+
+def _group(category: str) -> str:
+    if category in ("cafe", "food"):
+        return "eat"
+    if category in ("shop", "other"):
+        return "shop"
+    return "sight"
+
 
 @dataclass
 class Preferences:
@@ -50,6 +72,9 @@ class Preferences:
     pace: str = "normal"
     max_transit_min: int = 45
     start_place: str = ""
+    # 由 AI 从"人均 100 以内""想去评价好的"这类话里解析出来
+    budget_per_person: int = 0      # 0 表示不限
+    prefer_high_rating: bool = False
 
 
 def _blocked(poi: Poi, avoid: list[str]) -> bool:
@@ -82,28 +107,89 @@ def _pick_origin(prefs: Preferences, candidates: list[Poi]) -> Poi:
     )
 
 
+def _score_poi(
+    poi: Poi,
+    transit: int,
+    prefs: Preferences,
+    plan: list[tuple[Poi, int, int, int]],
+) -> tuple[float, list[str], bool]:
+    """
+    把"AI 解析出的偏好"和"高德给的真实字段"合成一个分数。
+
+    返回 (分数, 选择理由, 是否允许)。分数越低越优先。
+    这是"AI 条件 × 高德数据"真正结合的地方：
+      · 通勤时间来自坐标（高德）
+      · 评分/人均来自 biz_ext（高德）
+      · 预算/节奏/避雷来自 AI 解析（ai.py）
+    """
+    reasons: list[str] = []
+    score = float(transit)
+    if transit <= 15:
+        reasons.append(f"顺路（{transit} 分钟）")
+
+    last_category = plan[-1][0].category if plan else None
+    same_kind = sum(1 for p, _, _, _ in plan if p.category == poi.category)
+
+    # 同类数量上限：一天不该去四家咖啡馆
+    cap = MAX_PER_CATEGORY.get(poi.category, 2)
+    if same_kind >= cap:
+        return score, [f"同类已经排了 {same_kind} 个"], False
+
+    # 大类上限：cafe 与 food 合起来限 3 个，堵住"分类不同但都是喝咖啡"的漏洞
+    group = _group(poi.category)
+    same_group = sum(1 for p, _, _, _ in plan if _group(p.category) == group)
+    if same_group >= MAX_PER_GROUP[group]:
+        return score, [f"{group} 类已经排了 {same_group} 个"], False
+
+    score += same_kind * 12
+    if poi.category == last_category:
+        score += 60   # 连续同类重罚
+
+    # 评分：高有加分（满分 5），没有评分数据不加不减
+    if poi.rating > 0:
+        score -= (poi.rating - 3.5) * 8
+        if poi.rating >= 4.3:
+            reasons.append(f"评分 {poi.rating}")
+
+    # 人均：超预算直接判死；在预算内且便宜有小加分
+    if prefs.budget_per_person > 0 and poi.cost > 0:
+        if poi.cost > prefs.budget_per_person:
+            return score + 1000, [f"人均 ¥{poi.cost:.0f} 超出预算 ¥{prefs.budget_per_person}"], False
+        score -= 6
+        reasons.append(f"人均 ¥{poi.cost:.0f}")
+
+    # 明确要"评价好的"时，没有评分数据的点要降权
+    if prefs.prefer_high_rating and poi.rating <= 0:
+        score += 25
+
+    # 有招牌菜的店更容易被选中（说明数据完整、也确实是个有内容的点）
+    if poi.tags:
+        reasons.append("招牌：" + "、".join(poi.tags[:3]))
+
+    return score, reasons, True
+
+
 def _ordered_pick(
     origin: Poi,
     pool: list[Poi],
     prefs: Preferences,
-) -> list[tuple[Poi, int, int]]:
+) -> list[tuple[Poi, int, int, int]]:
     """
-    贪心最近邻 + 时间窗：每一步挑"最近且来得及"的点。
+    贪心最近邻 + 时间窗 + 硬约束（通勤上限 / 营业时间 / 预算 / 同类数量）。
 
-    返回 [(poi, 到达分钟, 离开分钟), ...]
+    返回 [(poi, 到达分钟, 离开分钟, 通勤分钟), ...]
     """
     factor = PACE_FACTOR.get(prefs.pace, 1.0)
     remain = list(pool)
     current = origin
     clock = parse_time(prefs.start_time)
     end_limit = parse_time(prefs.end_time)
-    plan: list[tuple[Poi, int, int]] = []
+    plan: list[tuple[Poi, int, int, int]] = []
 
     while remain and len(plan) < MAX_NODES - 1:
         best = None
         best_transit = None
         best_score = None
-        last_category = plan[-1][0].category if plan else None
 
         for poi in remain:
             transit = travel_minutes(current, poi)
@@ -114,12 +200,17 @@ def _ordered_pick(
             leave = arrive + stay
             if leave > end_limit:
                 continue
-            # 优先近的；同类已选过要降权，连续同类要重罚
-            # （否则会排成"博物馆→博物馆→咖啡馆→咖啡馆"）
-            same_kind = sum(1 for p, _, _ in plan if p.category == poi.category)
-            score = transit + same_kind * 12
-            if poi.category == last_category:
-                score += 60
+
+            # 营业时间硬约束：到店时还没开门、或逛到打烊之后，都不排
+            window = poi.open_window()
+            if window is not None:
+                open_min, close_min = window
+                if arrive < open_min or leave > close_min:
+                    continue
+
+            score, _reasons, allowed = _score_poi(poi, transit, prefs, plan)
+            if not allowed:
+                continue
             if best_score is None or score < best_score:
                 best, best_transit, best_score = poi, transit, score
 
@@ -129,7 +220,7 @@ def _ordered_pick(
         stay = max(20, int(best.stay_min * factor))
         arrive = clock + best_transit
         leave = arrive + stay
-        plan.append((best, arrive, leave))
+        plan.append((best, arrive, leave, best_transit))
         remain.remove(best)
         current = best
         clock = leave
@@ -141,10 +232,39 @@ def _node_from_poi(
     poi: Poi,
     arrive: int,
     leave: int,
+    transit: int,
     index: int,
     locked: bool,
     prefs: Preferences,
 ) -> dict:
+    # 最晚开始时间 = 打烊时间 - 停留时长。
+    # 直接拿打烊时间当 windowLatest 是错的：那只保证"能进门"，
+    # 减掉停留时长才等于"能玩完"。这样约束引擎判的是同一件事。
+    window = poi.open_window()
+    stay_minutes = max(1, leave - arrive)
+    window_latest = format_time(window[1] - stay_minutes) if window else None
+
+    detail = {
+        "name": poi.name,
+        "category": poi.category,
+        "address": poi.address,
+        "rating": poi.rating or None,
+        "cost": poi.cost or None,
+        "openTime": poi.open_time or None,
+        "tel": poi.tel or None,
+        "tags": poi.tags,
+        # 数据来自哪里必须写清楚，缺什么也要说
+        "missing": [
+            label
+            for label, value in (
+                ("评分", poi.rating),
+                ("人均", poi.cost),
+                ("营业时间", poi.open_time),
+            )
+            if not value
+        ],
+    }
+
     return {
         "id": f"n_{index}",
         "type": "reservation" if poi.category == "food" else "place",
@@ -153,15 +273,20 @@ def _node_from_poi(
         "end": format_time(leave),
         "indoor": poi.indoor,
         "confirmed": locked,
-        "windowLatest": None,
+        "windowLatest": window_latest,
         "alternatives": [],
         "source": {
             "kind": "api",
-            "note": f"高德 POI 检索 · {poi.type_text or poi.category}",
+            "note": f"高德 POI · {poi.type_text or poi.category}",
             "at": prefs.date,
         },
-        # 没有开放时间和门票数据，所以置信度只能是 low，让用户确认
-        "confidence": "low",
+        # 置信度按高德实际给出的字段数量决定，不再一律 low
+        "confidence": poi.data_quality(),
+        # 高德原始字段 + 缺失项，前端可以直接显示"评分 4.4 · 人均 ¥39 · 07:30-22:00"
+        "poi": detail,
+        "reason": "；".join(
+            _score_poi(poi, transit, prefs, [])[1]
+        ) or "按偏好排序入选",
         "place": poi.name,
     }
 
@@ -280,7 +405,7 @@ def generate(prefs: Preferences) -> dict:
     if must_pois:
         must_prefs = Preferences(**{**pick_prefs.__dict__, "max_transit_min": 24 * 60})
         must_ordered = _ordered_pick(origin, must_pois, must_prefs)
-        placed = {p.name for p, _, _ in must_ordered}
+        placed = {p.name for p, _, _, _ in must_ordered}
         for poi in must_pois:
             if poi.name not in placed:
                 warnings.append(f"必去点「{poi.name}」来不及排进当天时间窗，已跳过")
@@ -310,8 +435,8 @@ def generate(prefs: Preferences) -> dict:
     ]
 
     locked_names = {p.name for p in must_pois}
-    for i, (poi, arrive, leave) in enumerate(ordered, start=1):
-        nodes.append(_node_from_poi(poi, arrive, leave, i, poi.name in locked_names, prefs))
+    for i, (poi, arrive, leave, transit) in enumerate(ordered, start=1):
+        nodes.append(_node_from_poi(poi, arrive, leave, transit, i, poi.name in locked_names, prefs))
 
     if len(nodes) < 3:
         raise RuntimeError("只排得出不到 3 个点，可能是时间太短或 max_transit_min 太小")

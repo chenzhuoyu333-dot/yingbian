@@ -291,6 +291,18 @@ def _rule_preferences(text: str) -> dict:
     if any(w in text for w in ["不想爬山", "不爬山", "别爬山", "不想走路", "恐高"]) and "爬山" not in avoid:
         avoid = avoid + ["爬山"]
 
+    # 人均预算："人均 100 以内" / "预算 200" / "50 块以内"
+    budget = None
+    for pattern in (r"人均\s*(\d{1,4})", r"预算\s*(\d{1,4})", r"(\d{1,4})\s*(?:元|块)\s*以内"):
+        found = re.search(pattern, text)
+        if found:
+            budget = int(found.group(1))
+            break
+
+    prefer_rating = any(
+        w in text for w in ("评分高", "评价好", "口碑好", "高分", "好吃的", "有名")
+    ) or None
+
     return {
         "city": city,
         "startTime": start_time,
@@ -300,6 +312,8 @@ def _rule_preferences(text: str) -> dict:
         "avoid": avoid,
         "pace": pace,
         "maxTransitMin": 45,
+        "budgetPerPerson": budget,
+        "preferHighRating": prefer_rating,
     }
 
 
@@ -364,6 +378,8 @@ _PREF_SYSTEM = """你是行程偏好解析器。把用户的中文需求解析�
   avoid: 字符串数组，用户说"不想/别去/不去"的东西；没有就输出 []
   pace: "relaxed" | "normal" | "packed" 或 null（"轻松/不想赶"→relaxed，"多去几个"→packed）
   maxTransitMin: 整数或 null
+  budgetPerPerson: 整数（人均预算上限，元）或 null（"人均100以内/预算200"）
+  preferHighRating: true/false 或 null（"想去评价好的/评分高的/口碑好"）
 
 示例：输入"想拍照、不想早起，别爬山，轻松一点"
 输出：{"city":null,"startTime":"10:30","endTime":null,"interests":["拍照"],
@@ -413,6 +429,17 @@ def parse_preferences(text: str) -> tuple[dict, str]:
         avoid = merged.get("avoid")
         if isinstance(avoid, list):
             merged["avoid"] = [str(a) for a in avoid][:4]
+
+        # 预算：必须是合理正整数，否则退回规则结果
+        try:
+            budget = int(merged.get("budgetPerPerson") or 0)
+            merged["budgetPerPerson"] = budget if 0 < budget <= 10000 else fixed.get("budgetPerPerson")
+        except (TypeError, ValueError):
+            merged["budgetPerPerson"] = fixed.get("budgetPerPerson")
+
+        merged["preferHighRating"] = bool(
+            merged.get("preferHighRating") or fixed.get("preferHighRating")
+        )
 
         return merged, "ai"
     return _rule_preferences(text), "rule"

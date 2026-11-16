@@ -111,6 +111,10 @@ class Node:
     sacrifice: str = ""
     dropped: bool = False
     resolved: bool = False
+    # 高德真实店面信息：rating / cost / openTime / tel / tags / missing
+    poi: dict[str, Any] | None = None
+    # 这个点为什么被选中（来自打分函数，可解释）
+    reason: str = ""
 
     @property
     def duration(self) -> int:
@@ -139,6 +143,10 @@ class Node:
             "contact": self.contact,
             "persons": list(self.persons),
             "sacrifice": self.sacrifice,
+            # 来自高德的真实店面信息（评分/人均/营业时间/电话/招牌菜）与入选理由。
+            # 生成器会填；手工计划没有这两个字段，前端读成空即可。
+            "poi": dict(self.poi) if self.poi else None,
+            "reason": self.reason,
         }
 
     @classmethod
@@ -164,6 +172,8 @@ class Node:
                 contact=raw.get("contact", ""),
                 persons=list(raw.get("persons", [])),
                 sacrifice=raw.get("sacrifice", ""),
+                poi=dict(raw.get("poi") or {}) or None,
+                reason=raw.get("reason", ""),
             )
         except KeyError as exc:
             raise PlanError(f"节点缺少字段 {exc.args[0]}: {raw.get('id', '?')}") from exc
