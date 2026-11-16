@@ -20,7 +20,8 @@ interface PlanRepository {
     suspend fun undo(): Plan
     suspend fun setLocked(nodeId: String, locked: Boolean): Plan
     suspend fun reset(): Plan
-    suspend fun weather(): Weather
+    /** 取天气；有定位时传经纬度，没有时使用后端默认位置。 */
+    suspend fun weather(lat: Double? = null, lng: Double? = null): Weather
     fun cachedPlan(): Plan?
 
     // ── 多人协作 ──────────────────────────────────
@@ -119,7 +120,7 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
         return updated
     }
 
-    override suspend fun weather(): Weather {
+    override suspend fun weather(lat: Double?, lng: Double?): Weather {
         delay(200)
         return PlanJson.parseWeather(readAsset("weather.json").getJSONObject("data"))
     }
@@ -298,8 +299,14 @@ class RemotePlanRepository(
         return PlanJson.parsePlan(raw)
     }
 
-    override suspend fun weather(): Weather =
-        PlanJson.parseWeather(request("GET", "/api/weather?lat=30.1&lng=120.2"))
+    override suspend fun weather(lat: Double?, lng: Double?): Weather {
+        val query = if (lat != null && lng != null) {
+            "?lat=$lat&lng=$lng"
+        } else {
+            "?lat=30.1&lng=120.2"
+        }
+        return PlanJson.parseWeather(request("GET", "/api/weather$query"))
+    }
 
     // ── 多人协作 ──────────────────────────────────
     override suspend fun join(): List<MemberInfo> {

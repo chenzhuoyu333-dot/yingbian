@@ -1,5 +1,6 @@
 package com.example.yingbian.ui
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -7,6 +8,8 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -44,8 +47,11 @@ import androidx.compose.ui.unit.sp
 import com.example.yingbian.data.ApiConfig
 import com.example.yingbian.data.ApiSettings
 import com.example.yingbian.data.GeneratePrefs
+import com.example.yingbian.data.LocationHelper
 import com.example.yingbian.data.createRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,11 +61,44 @@ fun YingBianRoot() {
     var repoVersion by remember { mutableIntStateOf(0) }
     val controller = remember(repoVersion) { PlanController(createRepository(context, settings), settings) }
     val scope = rememberCoroutineScope()
+    val locationHelper = remember { LocationHelper(context) }
     var debugOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
     var generateOpen by remember { mutableStateOf(false) }
     var voteOpen by remember { mutableStateOf(false) }
     var activityOpen by remember { mutableStateOf(false) }
+
+    suspend fun refreshWeatherFromLocation() {
+        val point = withContext(Dispatchers.IO) { locationHelper.lastKnown() }
+        if (point == null) {
+            Toast.makeText(context, "没取到定位，仍可使用默认位置", Toast.LENGTH_LONG).show()
+        } else {
+            controller.refreshWeather(point.first, point.second)
+        }
+    }
+
+    val locationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        if (grants.values.any { it }) {
+            scope.launch { refreshWeatherFromLocation() }
+        } else {
+            Toast.makeText(context, "没有定位权限，仍可使用默认位置", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun useMyLocation() {
+        if (locationHelper.hasPermission()) {
+            scope.launch { refreshWeatherFromLocation() }
+        } else {
+            locationLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                ),
+            )
+        }
+    }
 
     LaunchedEffect(repoVersion) {
         controller.load()
@@ -148,6 +187,10 @@ fun YingBianRoot() {
                                 onRain = { scope.launch { controller.simulateRain() } },
                                 onImpact = { controller.openImpact() },
                                 onSchemes = { scope.launch { controller.loadSchemes() } },
+                                weatherLocation = controller.weatherLocation,
+                                weatherError = controller.weatherError,
+                                weatherLoading = controller.weatherLoading,
+                                onUseLocation = { useMyLocation() },
                                 onVote = {
                                     scope.launch {
                                         controller.startVote()

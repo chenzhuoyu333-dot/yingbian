@@ -52,6 +52,12 @@ class PlanController(
         private set
     var weather by mutableStateOf<Weather?>(null)
         private set
+    var weatherLocation by mutableStateOf("默认位置")
+        private set
+    var weatherError by mutableStateOf<String?>(null)
+        private set
+    var weatherLoading by mutableStateOf(false)
+        private set
     var loading by mutableStateOf(false)
         private set
     var error by mutableStateOf<String?>(null)
@@ -163,6 +169,30 @@ class PlanController(
     val selectedScheme: RepairScheme?
         get() = schemes.firstOrNull { it.id == selectedSchemeId }
 
+    private suspend fun loadWeather(lat: Double? = null, lng: Double? = null) {
+        try {
+            weather = repo.weather(lat, lng)
+            weatherError = null
+            weatherLocation = if (lat != null && lng != null) "我的位置" else "默认位置（杭州）"
+        } catch (exception: Exception) {
+            weatherError = exception.message ?: "天气获取失败"
+        }
+    }
+
+    /** 用户点“用我的位置”后调用；失败时保留旧天气并显示原因。 */
+    suspend fun refreshWeather(lat: Double, lng: Double) {
+        weatherLoading = true
+        weatherError = null
+        try {
+            weather = repo.weather(lat, lng)
+            weatherLocation = "我的位置"
+        } catch (exception: Exception) {
+            weatherError = exception.message ?: "天气获取失败"
+        } finally {
+            weatherLoading = false
+        }
+    }
+
     suspend fun load() {
         scenario = DemoScenario.RAIN
         eventTitle = "降雨 15:00–17:00"
@@ -172,7 +202,7 @@ class PlanController(
         offline = false
         try {
             plan = repo.loadPlan()
-            weather = runCatching { repo.weather() }.getOrNull()
+            loadWeather()
         } catch (exception: Exception) {
             val cached = repo.cachedPlan()
             if (cached != null) {
@@ -226,7 +256,7 @@ class PlanController(
             blockedMessage = null
             blockedNode = null
             screen = AppScreen.Plan
-            weather = runCatching { repo.weather() }.getOrNull()
+            loadWeather()
             generateNote = "已生成 ${plan?.nodes?.size ?: 0} 个节点，其中 ${
                 plan?.nodes?.count { it.confirmed } ?: 0
             } 个已锁定"
@@ -456,7 +486,7 @@ class PlanController(
             lastScheme = null
             planBeforeApply = null
             screen = AppScreen.Plan
-            weather = runCatching { repo.weather() }.getOrNull()
+            loadWeather()
         } catch (exception: Exception) {
             error = exception.message ?: "恢复失败"
         } finally {

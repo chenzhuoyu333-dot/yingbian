@@ -69,9 +69,13 @@ fun PlanScreen(
     onActivity: () -> Unit = {},
     memberCount: Int = 0,
     voteOpen: Boolean = false,
+    weatherLocation: String = "默认位置",
+    weatherError: String? = null,
+    weatherLoading: Boolean = false,
+    onUseLocation: () -> Unit = {},
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        WeatherCard(weather)
+        WeatherCard(weather, weatherLocation, weatherError, weatherLoading, onUseLocation)
         if (offline) OfflineBanner()
         CollabBar(
             memberCount = memberCount,
@@ -120,7 +124,13 @@ private fun gapBetween(plan: Plan, from: PlanNode, to: PlanNode): Int =
     plan.edges.firstOrNull { it.from == from.id && it.to == to.id }?.minGapMin ?: 0
 
 @Composable
-private fun WeatherCard(weather: Weather?) {
+private fun WeatherCard(
+    weather: Weather?,
+    weatherLocation: String,
+    weatherError: String?,
+    weatherLoading: Boolean,
+    onUseLocation: () -> Unit,
+) {
     val demo = weather?.isDemo == true
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
@@ -143,9 +153,25 @@ private fun WeatherCard(weather: Weather?) {
                             color = Color(0xFF8A5A00),
                         )
                     }
+                    Spacer(Modifier.weight(1f))
+                    if (weatherLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                        )
+                    }
+                    TextButton(
+                        onClick = onUseLocation,
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                    ) {
+                        Text(
+                            text = if (weatherLoading) "定位中" else "用我的位置",
+                            fontSize = 11.sp,
+                        )
+                    }
                 }
                 Text(
-                    text = weather?.text ?: "天气加载中",
+                    text = weather?.text ?: if (weatherError != null) "天气获取失败" else "天气加载中",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = Ink,
@@ -153,7 +179,9 @@ private fun WeatherCard(weather: Weather?) {
                 )
                 Text(
                     text = buildString {
-                        append(weather?.source ?: "本地示例")
+                        append(weather?.source ?: "等待获取")
+                        append(" · ")
+                        append(weatherLocation)
                         append(" · 更新于 ")
                         append(weather?.fetchedAt?.replace("T", " ") ?: "--")
                     },
@@ -168,6 +196,23 @@ private fun WeatherCard(weather: Weather?) {
                         text = "依据：$basis",
                         fontSize = 9.sp,
                         color = Muted,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                val note = weather?.note.orEmpty()
+                if (note.isNotBlank()) {
+                    Text(
+                        text = "说明：$note",
+                        fontSize = 9.sp,
+                        color = Color(0xFF8A5A00),
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                if (!weatherError.isNullOrBlank()) {
+                    Text(
+                        text = "获取失败：$weatherError",
+                        fontSize = 9.sp,
+                        color = ConflictOrange,
                         modifier = Modifier.padding(top = 2.dp),
                     )
                 }
