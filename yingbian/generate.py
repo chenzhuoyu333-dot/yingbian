@@ -248,6 +248,9 @@ def _node_from_poi(
         "name": poi.name,
         "category": poi.category,
         "address": poi.address,
+        # 坐标要留着：天气按"这份行程在哪"来查，而不是查一个写死的默认城市
+        "lng": round(poi.lng, 6),
+        "lat": round(poi.lat, 6),
         "rating": poi.rating or None,
         "cost": poi.cost or None,
         "openTime": poi.open_time or None,

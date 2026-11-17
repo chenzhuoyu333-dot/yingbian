@@ -73,7 +73,7 @@ fun YingBianRoot() {
     suspend fun refreshWeatherFromLocation() {
         val point = withContext(Dispatchers.IO) { locationHelper.lastKnown() }
         if (point == null) {
-            Toast.makeText(context, "没取到定位，仍可使用默认位置", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "没取到定位，仍可查看行程本身", Toast.LENGTH_LONG).show()
         } else {
             controller.refreshWeather(point.first, point.second)
         }
@@ -85,7 +85,7 @@ fun YingBianRoot() {
         if (grants.values.any { it }) {
             scope.launch { refreshWeatherFromLocation() }
         } else {
-            Toast.makeText(context, "没有定位权限，仍可使用默认位置", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "没有定位权限，仍可查看行程本身", Toast.LENGTH_SHORT).show()
         }
     }
 

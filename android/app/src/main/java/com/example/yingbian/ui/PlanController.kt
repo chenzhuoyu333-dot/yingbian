@@ -55,7 +55,7 @@ class PlanController(
         private set
     var weather by mutableStateOf<Weather?>(null)
         private set
-    var weatherLocation by mutableStateOf("默认位置")
+    var weatherLocation by mutableStateOf("行程所在地")
         private set
     var weatherError by mutableStateOf<String?>(null)
         private set
@@ -218,7 +218,8 @@ class PlanController(
             blockedMessage = null
             blockedNode = null
             screen = AppScreen.Plan
-            weather = runCatching { repo.weather() }.getOrNull()
+            weather = runCatching { repo.planWeather() }.getOrNull()
+            weather?.place?.takeIf { it.isNotBlank() }?.let { weatherLocation = it }
             generateNote = "已生成 ${plan?.nodes?.size ?: 0} 个节点"
             loadHome()
         } catch (exception: Exception) {
@@ -240,7 +241,8 @@ class PlanController(
             notifications = emptyList()
             todos = emptyList()
             screen = AppScreen.Plan
-            weather = runCatching { repo.weather() }.getOrNull()
+            weather = runCatching { repo.planWeather() }.getOrNull()
+            weather?.place?.takeIf { it.isNotBlank() }?.let { weatherLocation = it }
         } catch (exception: Exception) {
             error = exception.message ?: "打开失败"
         } finally {
@@ -262,7 +264,7 @@ class PlanController(
         try {
             weather = repo.weather(lat, lng)
             weatherError = null
-            weatherLocation = if (lat != null && lng != null) "我的位置" else "默认位置（杭州）"
+            weatherLocation = if (lat != null && lng != null) "我的位置" else "行程所在地"
         } catch (exception: Exception) {
             weatherError = exception.message ?: "天气获取失败"
         }

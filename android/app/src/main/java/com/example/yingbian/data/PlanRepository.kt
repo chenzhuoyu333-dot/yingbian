@@ -26,8 +26,16 @@ interface PlanRepository {
     suspend fun undo(): Plan
     suspend fun setLocked(nodeId: String, locked: Boolean): Plan
     suspend fun reset(): Plan
-    /** 取天气；有定位时传经纬度，没有时使用后端默认位置。 */
+    /** 取天气；有定位时传经纬度。行程天气请用 planWeather()。 */
     suspend fun weather(lat: Double? = null, lng: Double? = null): Weather
+
+    /**
+     * 按"这份行程在哪"取天气。
+     * 返回 null 表示这份行程没有坐标（或还没生成）——
+     * 这时界面就不展示天气，而不是拿默认城市冒充。
+     */
+    suspend fun planWeather(): Weather?
+
     fun cachedPlan(): Plan?
 
     // ── 首页：我的计划 ────────────────────────────
@@ -253,6 +261,8 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
         current = updated
         return updated
     }
+
+    override suspend fun planWeather(): Weather? = weather()
 
     override suspend fun weather(lat: Double?, lng: Double?): Weather {
         delay(200)
@@ -541,6 +551,12 @@ class RemotePlanRepository(
         if (planId == this.planId) {
             this.planId = "p_sat_guzhen"
         }
+    }
+
+    override suspend fun planWeather(): Weather? {
+        val data = request("GET", "/api/plan/$planId/weather")
+        if (!data.optBoolean("available", false)) return null
+        return PlanJson.parseWeather(data)
     }
 
     override suspend fun reset(): Plan = loadPlan()

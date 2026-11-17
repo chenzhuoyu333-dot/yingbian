@@ -73,13 +73,28 @@ fun PlanScreen(
     onActivity: () -> Unit = {},
     memberCount: Int = 0,
     voteOpen: Boolean = false,
-    weatherLocation: String = "默认位置",
+    weatherLocation: String = "行程所在地",
     weatherError: String? = null,
     weatherLoading: Boolean = false,
     onUseLocation: () -> Unit = {},
 ) {
+    var weatherOpen by remember { mutableStateOf(false) }
+
     Column(modifier = Modifier.fillMaxSize()) {
-        WeatherCard(weather, weatherLocation, weatherError, weatherLoading, onUseLocation)
+        // 没有天气（还没生成行程 / 这份行程没有坐标）就整块不显示，不占面积
+        weather?.let { w ->
+            WeatherChip(w, onClick = { weatherOpen = true })
+            if (weatherOpen) {
+                WeatherDialog(
+                    weather = w,
+                    location = weatherLocation,
+                    loading = weatherLoading,
+                    error = weatherError,
+                    onUseLocation = onUseLocation,
+                    onDismiss = { weatherOpen = false },
+                )
+            }
+        }
         if (offline) OfflineBanner()
         CollabBar(
             memberCount = memberCount,
@@ -130,106 +145,107 @@ private fun gapBetween(plan: Plan, from: PlanNode, to: PlanNode): Int =
     plan.edges.firstOrNull { it.from == from.id && it.to == to.id }?.minGapMin ?: 0
 
 @Composable
-private fun WeatherCard(
-    weather: Weather?,
-    weatherLocation: String,
-    weatherError: String?,
-    weatherLoading: Boolean,
-    onUseLocation: () -> Unit,
-) {
-    val demo = weather?.isDemo == true
+private fun WeatherChip(weather: Weather, onClick: () -> Unit) {
+    // 只占一行：天气 + 降雨概率 + 来源提示。详细信息点进对话框看。
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-        color = if (demo) Color(0xFFFFF8E1) else SoftBlue,
-        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        color = if (weather.isDemo) Color(0xFFFFF8E1) else SoftBlue,
+        shape = RoundedCornerShape(10.dp),
+        onClick = onClick,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("天气", fontSize = 11.sp, color = Muted)
-                    // 演示数据必须能一眼看出来，不能让假数据冒充真实预报
-                    if (demo) {
-                        Text(
-                            text = "  演示数据",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF8A5A00),
-                        )
-                    }
-                    Spacer(Modifier.weight(1f))
-                    if (weatherLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(14.dp),
-                            strokeWidth = 2.dp,
-                        )
-                    }
-                    TextButton(
-                        onClick = onUseLocation,
-                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                    ) {
-                        Text(
-                            text = if (weatherLoading) "定位中" else "用我的位置",
-                            fontSize = 11.sp,
-                        )
-                    }
-                }
+            Text(
+                text = weather.text.ifBlank { "天气" },
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Ink,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "${(weather.rainProb * 100).toInt()}%",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (weather.rainProb >= 0.6) ConflictOrange else OkGreen,
+            )
+            if (weather.isDemo) {
                 Text(
-                    text = weather?.text ?: if (weatherError != null) "天气获取失败" else "天气加载中",
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Ink,
-                    modifier = Modifier.padding(top = 2.dp),
-                )
-                Text(
-                    text = buildString {
-                        append(weather?.source ?: "等待获取")
-                        append(" · ")
-                        append(weatherLocation)
-                        append(" · 更新于 ")
-                        append(weather?.fetchedAt?.replace("T", " ") ?: "--")
-                    },
+                    text = "  演示数据",
                     fontSize = 10.sp,
-                    color = Muted,
-                    modifier = Modifier.padding(top = 2.dp),
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF8A5A00),
                 )
-                // 依据：这个概率是怎么算出来的（真实来源时显示 pop，估算时显示规则）
-                val basis = weather?.basis.orEmpty()
-                if (basis.isNotBlank()) {
+            }
+            Spacer(Modifier.weight(1f))
+            Text(text = "详情 ›", fontSize = 10.sp, color = Muted)
+        }
+    }
+}
+
+/** 天气详情：来源、更新时间、概率依据都放这里，不再占主界面面积 */
+@Composable
+private fun WeatherDialog(
+    weather: Weather,
+    location: String,
+    loading: Boolean,
+    error: String?,
+    onUseLocation: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("天气详情") },
+        text = {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "依据：$basis",
-                        fontSize = 9.sp,
-                        color = Muted,
-                        modifier = Modifier.padding(top = 2.dp),
+                        text = weather.text.ifBlank { "未知" },
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Ink,
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        text = "降雨 ${(weather.rainProb * 100).toInt()}%",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = if (weather.rainProb >= 0.6) ConflictOrange else OkGreen,
                     )
                 }
-                val note = weather?.note.orEmpty()
-                if (note.isNotBlank()) {
+                if (weather.isDemo) {
                     Text(
-                        text = "说明：$note",
-                        fontSize = 9.sp,
+                        text = "演示数据 —— 不是真实预报",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
                         color = Color(0xFF8A5A00),
-                        modifier = Modifier.padding(top = 2.dp),
+                        modifier = Modifier.padding(top = 4.dp),
                     )
                 }
-                if (!weatherError.isNullOrBlank()) {
-                    Text(
-                        text = "获取失败：$weatherError",
-                        fontSize = 9.sp,
-                        color = ConflictOrange,
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
+                Spacer(Modifier.height(10.dp))
+                DetailLine("来源", weather.source)
+                DetailLine("位置", location)
+                DetailLine("更新", weather.fetchedAt.replace("T", " "))
+                if (weather.basis.isNotBlank()) DetailLine("概率依据", weather.basis)
+                if (weather.note.isNotBlank()) DetailLine("说明", weather.note)
+                if (!error.isNullOrBlank()) DetailLine("定位错误", error)
+
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = onUseLocation, contentPadding = PaddingValues(0.dp)) {
+                    Text(if (loading) "定位中…" else "用我的位置重新查询", fontSize = 11.sp)
                 }
             }
-            Text(
-                text = "${((weather?.rainProb ?: 0.0) * 100).toInt()}%",
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Bold,
-                color = if ((weather?.rainProb ?: 0.0) >= 0.6) ConflictOrange else OkGreen,
-            )
-        }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+    )
+}
+
+@Composable
+private fun DetailLine(label: String, value: String) {
+    Row(modifier = Modifier.padding(vertical = 2.dp)) {
+        Text("$label：", fontSize = 11.sp, color = Muted)
+        Text(value, fontSize = 11.sp, color = Ink)
     }
 }
 

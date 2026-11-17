@@ -572,6 +572,44 @@ def post_undo(plan_id: str):
     return _ok({"plan": plan.to_dict(), "version": plan.version})
 
 
+@app.get("/api/plan/{plan_id}/weather")
+def get_plan_weather(plan_id: str):
+    """
+    按"这份行程实际在哪"查天气。
+
+    取消默认地点的原因：写死一个杭州坐标，会让宁波的行程显示杭州天气 ——
+    数据是真的，但和用户无关，比没有更糟。
+    找不到坐标就明确返回 available=false，界面不展示天气。
+    """
+    plan = _plan_or_404(plan_id)
+    if plan is None:
+        return _error("NOT_FOUND", "计划不存在", 404)
+
+    point = None
+    for node in plan.nodes:
+        if getattr(node, "dropped", False):
+            continue
+        poi = getattr(node, "poi", None) or {}
+        if poi.get("lat") and poi.get("lng"):
+            point = poi
+            break
+
+    if point is None:
+        return _ok(
+            {
+                "available": False,
+                "reason": "这份行程没有地点坐标（内置示范计划），所以不给天气 —— 不拿默认城市冒充",
+                "planId": plan_id,
+            }
+        )
+
+    data = fetch_weather(point["lat"], point["lng"])
+    data["available"] = True
+    data["place"] = point.get("name") or ""
+    data["planId"] = plan_id
+    return _ok(data)
+
+
 @app.get("/api/weather")
 def get_weather(lat: float | None = Query(default=None), lng: float | None = Query(default=None)):
     return _ok(fetch_weather(lat, lng))

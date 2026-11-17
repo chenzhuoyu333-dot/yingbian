@@ -183,6 +183,8 @@ data class Weather(
     val basis: String = "",
     /** isDemo 为真时，后端给的原因说明 */
     val note: String = "",
+    /** 这份天气属于哪个地点（后端按行程坐标查出来的） */
+    val place: String = "",
 )
 
 fun parseMinutes(value: String): Int {
@@ -396,6 +398,7 @@ object PlanJson {
         isDemo = data.optBoolean("isDemo", false),
         basis = data.optString("basis", ""),
         note = data.optString("note", ""),
+        place = data.optString("place", ""),
     )
 
     fun parseVote(raw: JSONObject): VoteState {
