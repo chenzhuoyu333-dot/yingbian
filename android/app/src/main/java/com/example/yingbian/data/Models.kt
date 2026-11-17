@@ -369,7 +369,7 @@ object PlanJson {
         }
         val options = raw.optJSONArray("options")?.let { arr ->
             (0 until arr.length()).map { arr.optString(it, "") }.filter { it.isNotBlank() }
-        } ?: listOf("A", "B", "C")
+        } ?: listOf("A", "B")
 
         val event = raw.optJSONObject("event")
         val eventText = when {

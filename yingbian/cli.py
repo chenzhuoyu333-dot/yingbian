@@ -118,7 +118,7 @@ def cmd_demo(args: argparse.Namespace) -> int:
     print(render(report))
     print("")
     print("[22–38s] 三个方案：默认 B 保体验")
-    for key in ("A", "B", "C"):
+    for key in ("A", "B"):
         print(render_result(repair(plan, event, scheme_key=key)))
         print("")
     print("[38–50s] 选 B：只改必要节点，锁定的 5 个不动")
@@ -198,7 +198,7 @@ def build_parser() -> argparse.ArgumentParser:
     case = sub.add_parser("case")
     case.add_argument("case", choices=list(CASES))
     case.add_argument("--repair", action="store_true")
-    case.add_argument("--scheme", choices=["A", "B", "C"], default="B")
+    case.add_argument("--scheme", choices=["A", "B"], default="B")
     case.add_argument("--data", default=None)
     case.add_argument("--json", action="store_true")
     case.set_defaults(func=cmd_case)

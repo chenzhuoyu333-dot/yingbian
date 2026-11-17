@@ -26,7 +26,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 
-SCHEMES = ("A", "B", "C")
+SCHEMES = ("A", "B")
 DEFAULT_TTL_SECONDS = 300   # 5 分钟没人投完就按默认方案执行，不能卡死
 MAX_ACTIVITY = 50
 

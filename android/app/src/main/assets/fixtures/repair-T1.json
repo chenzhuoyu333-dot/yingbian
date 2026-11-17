@@ -12,22 +12,26 @@
         "actions": [
           {
             "nodeId": "n_sunset",
-            "action": "drop",
-            "payload": {},
-            "reason": "备选代价更高，选择放弃",
-            "cost": 100,
-            "sacrifice": "放弃湖边日落点"
+            "action": "replace",
+            "payload": {
+              "alternativeId": "a_museum",
+              "fromTitle": "湖边日落点",
+              "toTitle": "市美术馆"
+            },
+            "reason": "改去「市美术馆」",
+            "cost": 310.0,
+            "sacrifice": "看不到日落"
           },
           {
             "nodeId": "n_photo",
             "action": "drop",
             "payload": {},
             "reason": "没有可用的室内备选",
-            "cost": 100,
+            "cost": 1500,
             "sacrifice": "放弃湖边拍照"
           }
         ],
-        "sacrifice": "放弃湖边日落点；放弃湖边拍照",
+        "sacrifice": "看不到日落；放弃湖边拍照",
         "blockedNode": null,
         "message": "",
         "elapsedMs": 0
@@ -48,7 +52,7 @@
               "toTitle": "市美术馆"
             },
             "reason": "改去「市美术馆」",
-            "cost": 60.0,
+            "cost": 75.0,
             "sacrifice": "看不到日落"
           },
           {
@@ -56,40 +60,7 @@
             "action": "drop",
             "payload": {},
             "reason": "没有可用的室内备选",
-            "cost": 100,
-            "sacrifice": "放弃湖边拍照"
-          }
-        ],
-        "sacrifice": "看不到日落；放弃湖边拍照",
-        "blockedNode": null,
-        "message": "",
-        "elapsedMs": 0
-      },
-      {
-        "status": "ok",
-        "id": "C",
-        "label": "保少改动",
-        "keepRate": 1.0,
-        "changedCount": 2,
-        "actions": [
-          {
-            "nodeId": "n_sunset",
-            "action": "replace",
-            "payload": {
-              "alternativeId": "a_museum",
-              "fromTitle": "湖边日落点",
-              "toTitle": "市美术馆"
-            },
-            "reason": "改去「市美术馆」",
-            "cost": 70.0,
-            "sacrifice": "看不到日落"
-          },
-          {
-            "nodeId": "n_photo",
-            "action": "drop",
-            "payload": {},
-            "reason": "没有可用的室内备选",
-            "cost": 200,
+            "cost": 1215,
             "sacrifice": "放弃湖边拍照"
           }
         ],

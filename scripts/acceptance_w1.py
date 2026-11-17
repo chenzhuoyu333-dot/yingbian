@@ -125,7 +125,7 @@ def main() -> int:
     )
 
     print("\n[3/7] T1 三套修复方案")
-    status, body = call(base, f"/api/plan/{PLAN_ID}/repair", {"event": RAIN, "schemes": ["A", "B", "C"]})
+    status, body = call(base, f"/api/plan/{PLAN_ID}/repair", {"event": RAIN, "schemes": ["A", "B"]})
     repair = body.get("data") or {}
     schemes = repair.get("schemes") or []
     lines = []
@@ -179,7 +179,7 @@ def main() -> int:
 
     print("\n[7/7] T4 锁定节点冲突")
     call(base, "/api/debug/lock", {"planId": PLAN_ID, "nodeId": "n_sunset", "confirmed": True})
-    status, body = call(base, f"/api/plan/{PLAN_ID}/repair", {"event": RAIN, "schemes": ["A", "B", "C"]})
+    status, body = call(base, f"/api/plan/{PLAN_ID}/repair", {"event": RAIN, "schemes": ["A", "B"]})
     blocked = body.get("data") or {}
     report.check(
         "锁定后重算停在冲突，不擅自改",

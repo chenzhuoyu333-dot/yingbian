@@ -26,7 +26,9 @@
           "place": "南门地铁站 A 口",
           "contact": "",
           "persons": [],
-          "sacrifice": ""
+          "sacrifice": "",
+          "poi": null,
+          "reason": ""
         },
         {
           "id": "n_transit_go",
@@ -47,7 +49,9 @@
           "place": "地铁 2 号线 → 古镇专线",
           "contact": "",
           "persons": [],
-          "sacrifice": ""
+          "sacrifice": "",
+          "poi": null,
+          "reason": ""
         },
         {
           "id": "n_town",
@@ -68,7 +72,9 @@
           "place": "古镇老街",
           "contact": "",
           "persons": [],
-          "sacrifice": ""
+          "sacrifice": "",
+          "poi": null,
+          "reason": ""
         },
         {
           "id": "n_lunch",
@@ -101,7 +107,9 @@
           "place": "河边餐厅",
           "contact": "0580-1234567",
           "persons": [],
-          "sacrifice": ""
+          "sacrifice": "",
+          "poi": null,
+          "reason": ""
         },
         {
           "id": "n_tea",
@@ -122,7 +130,9 @@
           "place": "老宅茶馆",
           "contact": "",
           "persons": [],
-          "sacrifice": ""
+          "sacrifice": "",
+          "poi": null,
+          "reason": ""
         },
         {
           "id": "n_river",
@@ -143,7 +153,9 @@
           "place": "河畔步道",
           "contact": "",
           "persons": [],
-          "sacrifice": ""
+          "sacrifice": "",
+          "poi": null,
+          "reason": ""
         },
         {
           "id": "n_sunset",
@@ -176,7 +188,9 @@
           "place": "西岸观景台",
           "contact": "",
           "persons": [],
-          "sacrifice": ""
+          "sacrifice": "",
+          "poi": null,
+          "reason": ""
         },
         {
           "id": "n_photo",
@@ -197,7 +211,9 @@
           "place": "西岸观景台",
           "contact": "",
           "persons": [],
-          "sacrifice": ""
+          "sacrifice": "",
+          "poi": null,
+          "reason": ""
         },
         {
           "id": "n_transit_back",
@@ -218,7 +234,9 @@
           "place": "古镇客运站",
           "contact": "",
           "persons": [],
-          "sacrifice": ""
+          "sacrifice": "",
+          "poi": null,
+          "reason": ""
         },
         {
           "id": "n_hotpot",
@@ -239,7 +257,9 @@
           "place": "老城火锅",
           "contact": "0580-7654321",
           "persons": [],
-          "sacrifice": ""
+          "sacrifice": "",
+          "poi": null,
+          "reason": ""
         },
         {
           "id": "n_market",
@@ -260,7 +280,9 @@
           "place": "老城夜市",
           "contact": "",
           "persons": [],
-          "sacrifice": ""
+          "sacrifice": "",
+          "poi": null,
+          "reason": ""
         },
         {
           "id": "n_hotel",
@@ -281,7 +303,9 @@
           "place": "老城酒店",
           "contact": "",
           "persons": [],
-          "sacrifice": ""
+          "sacrifice": "",
+          "poi": null,
+          "reason": ""
         }
       ],
       "edges": [

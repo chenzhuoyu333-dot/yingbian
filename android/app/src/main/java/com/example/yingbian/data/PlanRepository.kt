@@ -252,7 +252,7 @@ class RemotePlanRepository(
         PlanJson.parseImpact(request("POST", "/api/plan/$planId/event", eventBody(scenario)))
 
     override suspend fun repair(scenario: DemoScenario): RepairResult {
-        val schemes = JSONArray().put("A").put("B").put("C")
+        val schemes = JSONArray().put("A").put("B")
         val body = JSONObject().put("event", eventBody(scenario)).put("schemes", schemes)
         return PlanJson.parseRepair(request("POST", "/api/plan/$planId/repair", body))
     }

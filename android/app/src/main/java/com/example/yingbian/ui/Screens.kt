@@ -383,7 +383,7 @@ fun SchemeScreen(
     }
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
-            text = "按“保时间 / 保体验 / 保少改动”生成，选一套采用",
+            text = "按“保时间 / 保体验”生成两套，选一套采用",
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             fontSize = 12.sp,
             color = Muted,
@@ -698,7 +698,7 @@ fun VoteSheet(
     onVote: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val label = mapOf("A" to "保时间", "B" to "保体验", "C" to "保少改动")
+    val label = mapOf("A" to "保时间", "B" to "保体验")
     val myVote = vote.votes.entries.firstOrNull { it.value.isNotBlank() }?.value
 
     AlertDialog(

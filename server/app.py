@@ -391,7 +391,7 @@ def post_repair(plan_id: str, body: dict = Body(...)):
         return _error("NOT_FOUND", "计划不存在", 404)
     raw_event = body.get("event") or body
     event = Event.from_dict(raw_event)
-    schemes = body.get("schemes") or ["A", "B", "C"]
+    schemes = body.get("schemes") or ["A", "B"]
     results = [repair(plan, event, key) for key in schemes]
     blocked = next((item for item in results if item.status == "blocked"), None)
     if blocked is not None:
