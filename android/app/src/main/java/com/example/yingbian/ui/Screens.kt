@@ -345,7 +345,7 @@ private fun PlanBottomBar(
                     enabled = !offline,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(if (offline) "离线，无法重算" else "模拟下雨（15:00–17:00）")
+                    Text(if (offline) "离线，无法重算" else "报告变化：15:00 起下雨")
                 }
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

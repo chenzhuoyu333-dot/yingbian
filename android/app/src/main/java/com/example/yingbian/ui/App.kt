@@ -122,7 +122,7 @@ fun YingBianRoot() {
                             text = when (controller.screen) {
                                 AppScreen.Home -> "我的计划"
                                 AppScreen.Plan -> controller.plan?.title ?: "应变"
-                                AppScreen.Scheme -> "三方案对比"
+                                AppScreen.Scheme -> "两套方案对比"
                                 AppScreen.Notify -> "通知预览"
                                 AppScreen.Todo -> "待办清单"
                             },
