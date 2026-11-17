@@ -55,6 +55,8 @@ data class Plan(
     val generationWarnings: List<String> = emptyList(),
     /** 用户点名但没排进去的必去点，界面上要标「待确认」 */
     val unresolvedMustVisit: List<String> = emptyList(),
+    /** 生成器对用户那句话的理解，例如「3 天 · 杭州 · 想拍照 · 避开爬山」 */
+    val understanding: String = "",
 ) {
     fun node(id: String): PlanNode? = nodes.firstOrNull { it.id == id }
 }
@@ -328,6 +330,7 @@ object PlanJson {
         val generation = raw.optJSONObject("generation")
         val warnings = generation?.optJSONArray("warnings")?.strings().orEmpty()
         val unresolved = generation?.optJSONArray("unresolvedMustVisit")?.strings().orEmpty()
+        val humanSummary = generation?.optString("humanSummary", "").orEmpty()
 
         return Plan(
             planId = raw.text("planId"),
@@ -338,6 +341,7 @@ object PlanJson {
             edges = edges,
             generationWarnings = warnings,
             unresolvedMustVisit = unresolved,
+            understanding = humanSummary,
         )
     }
 

@@ -213,7 +213,16 @@ def _get_with_retry(url: str, attempts: int = 3) -> dict:
     raise RuntimeError(f"高德请求连续失败：{last_error}")
 
 
-def _classify(type_text: str, name: str = "") -> str:
+# 商场内的店铺特征：名字/地址里带这些，多半是柜台或商铺，不是独立景点
+_MALL_MARKERS = ("百货", "商厦", "购物中心", "层", "A座", "B座", "C座", "专柜", "店中店")
+
+
+def _looks_like_mall_tenant(name: str, address: str) -> bool:
+    haystack = f"{name} {address}"
+    return any(marker in haystack for marker in _MALL_MARKERS)
+
+
+def _classify(type_text: str, name: str = "", address: str = "") -> str:
     # 店名比类型字段更可靠：像 "Ora Coffee" 的 type 是"餐饮服务;餐饮相关场所"，
     # 只看类型会被归成普通餐厅，于是绕过"一天最多两家咖啡"的限制。
     lowered = (name or "").lower()
@@ -227,6 +236,8 @@ def _classify(type_text: str, name: str = "") -> str:
             return category
     # 认不出来就归到 other：室内、短停留、低优先级。
     # 以前兜底成 sight，结果把小商铺当成室外景点排进行程里。
+    if _looks_like_mall_tenant(name, address):
+        return "shop"
     return "other"
 
 
@@ -244,7 +255,7 @@ def _to_poi(raw: dict) -> Poi | None:
     name = (raw.get("name") or "").strip()
     if not name:
         return None
-    category = _classify(type_text, name)
+    category = _classify(type_text, name, raw.get("address") or "")
 
     # biz_ext 只有 extensions=all 才返回；缺失就留空，绝不编造默认值
     biz = raw.get("biz_ext") or {}

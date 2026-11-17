@@ -101,6 +101,16 @@ fun PlanScreen(
             onVote = onVote,
             onActivity = onActivity,
         )
+        if (plan.understanding.isNotBlank()) {
+            // 让用户一眼看到"AI 把你的话理解成了什么"，
+            // 而不是对着一份看不懂的行程发愣
+            Text(
+                text = "理解：" + plan.understanding,
+                fontSize = 10.sp,
+                color = Muted,
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp),
+            )
+        }
         if (plan.unresolvedMustVisit.isNotEmpty() || plan.generationWarnings.isNotEmpty()) {
             GenerateNotice(plan)
         }

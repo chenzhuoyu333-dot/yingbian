@@ -160,6 +160,10 @@ def _score_poi(
         score -= 6
         reasons.append(f"人均 ¥{poi.cost:.0f}")
 
+    # 商场店铺/未分类点：排在真景点和吃喝之后（不是不要，是最后才考虑）
+    if poi.category in ("shop", "other"):
+        score += 80
+
     # 明确要"评价好的"时，没有评分数据的点要降权
     if prefs.prefer_high_rating and poi.rating <= 0:
         score += 25
@@ -359,6 +363,57 @@ def _feasibility_check(plan: Plan) -> list[str]:
     return problems
 
 
+def _brand(name: str) -> str:
+    """去掉括号里的分店名，用来做连锁去重。
+    "星巴克(杭州来福士店)" 和 "星巴克(市民中心店)" 视为同一个品牌。
+    """
+    base = name.split("(")[0].split("（")[0].strip()
+    return base or name
+
+
+def _quality_filter(candidates: list[Poi], interests: list[str]) -> list[Poi]:
+    """
+    候选点质量过滤。按"宁可少而准"的原则：
+
+      · 同一品牌只保留评分最高的那家（避免一天排 4 家星巴克）
+      · 有评分且低于 4.0 的吃喝类直接剔除（评分是最便宜的噪声信号）
+      · 购物/其他类（商场里的店、被误判的小铺）降到最后，
+        只有在别的类不够时才用
+    """
+    kept: list[Poi] = []
+    seen_brand: dict[str, Poi] = {}
+
+    for poi in candidates:
+        rating = poi.rating or 0.0
+        # 低分吃喝不要
+        if poi.category in ("cafe", "food") and 0 < rating < 4.0:
+            continue
+        # 任何类别里评分特别低的也不要（但没评分的留着，小城市常常没数据）
+        if 0 < rating < 3.6:
+            continue
+
+        if poi.category in ("cafe", "food", "shop"):
+            brand = _brand(poi.name)
+            prev = seen_brand.get(brand)
+            if prev is not None:
+                # 同品牌：留评分高的；评分相同留人均低的
+                better = (rating, -(poi.cost or 0)) > (prev.rating or 0.0, -(prev.cost or 0))
+                if not better:
+                    continue
+                kept = [p for p in kept if p.name != prev.name]
+            seen_brand[brand] = poi
+
+        kept.append(poi)
+
+    # 购物/其他类（含商场里的店铺）垫底：
+    # 真景点和吃喝足够时直接不要它们，不够时才作为补充
+    sightish = [p for p in kept if p.category not in ("shop", "other")]
+    others = [p for p in kept if p.category in ("shop", "other")]
+    if len(sightish) >= 6:
+        return sightish
+    return sightish + others
+
+
 def generate(prefs: Preferences) -> dict:
     """生成 plan dict（结构与本仓库 data/plan-*.json 完全一致）"""
     if not key("AMAP_KEY"):
@@ -367,6 +422,7 @@ def generate(prefs: Preferences) -> dict:
     # ① 候选池
     candidates = search_interests(prefs.city, prefs.interests)
     candidates = [p for p in candidates if not _blocked(p, prefs.avoid)]
+    candidates = _quality_filter(candidates, list(prefs.interests))
 
     # ② 必去点：搜不到或被排除词挡掉，都要留下痕迹，不能当没发生
     must_pois: list[Poi] = []
@@ -538,6 +594,18 @@ def generate(prefs: Preferences) -> dict:
             "pace": prefs.pace,
             "days": days,
             "maxTransitMin": prefs.max_transit_min,
+            # 给界面用的一句话：让用户看到"AI 到底理解成什么"
+            "humanSummary": " · ".join(
+                part
+                for part in (
+                    f"{days} 天" if days > 1 else "当天往返",
+                    prefs.city,
+                    ("想" + "、".join(prefs.interests)) if prefs.interests else "",
+                    ("避开" + "、".join(prefs.avoid)) if prefs.avoid else "",
+                    (f"人均 {prefs.budget_per_person} 以内" if prefs.budget_per_person else ""),
+                )
+                if part
+            ),
             "warnings": warnings,
             "note": "地点来自高德 POI 检索；停留时长为经验值，通勤为直线距离估算，均标 confidence=low，请用户确认",
         },
