@@ -147,8 +147,11 @@ def propagate(plan: Plan, event: Event | None = None) -> ImpactReport:
     if event is not None:
         # memberLate: first version maps to the first node the person participates in
         if event.type == "memberLate":
+            explicit = plan.find(event.node_id) if event.node_id else None
             candidates = [node for node in plan.nodes if event.person_id in node.persons]
-            target = sorted(candidates, key=lambda n: n.start)[0] if candidates else plan.nodes[0]
+            target = explicit or (
+                sorted(candidates, key=lambda n: n.start)[0] if candidates else plan.nodes[0]
+            )
             event = Event(
                 type="delay",
                 node_id=target.id,

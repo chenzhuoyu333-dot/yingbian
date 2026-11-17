@@ -16,6 +16,12 @@ interface PlanRepository {
     suspend fun generate(prefs: GeneratePrefs): Plan
     suspend fun sendEvent(scenario: DemoScenario = DemoScenario.RAIN): Impact
     suspend fun repair(scenario: DemoScenario = DemoScenario.RAIN): RepairResult
+    /** 主动到达打卡；晚到时后端返回影响和可执行方案，不共享实时轨迹。 */
+    suspend fun checkin(
+        nodeId: String?,
+        minutes: Int,
+        personId: String? = null,
+    ): CheckinResult
     suspend fun applyScheme(scheme: RepairScheme): Plan
     suspend fun undo(): Plan
     suspend fun setLocked(nodeId: String, locked: Boolean): Plan
@@ -92,6 +98,120 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
             else -> "repair-T1.json"
         }
         return PlanJson.parseRepair(readAsset(name).getJSONObject("data"))
+    }
+
+    override suspend fun checkin(
+        nodeId: String?,
+        minutes: Int,
+        personId: String?,
+    ): CheckinResult {
+        delay(250)
+        val base = current ?: loadPlan()
+        val target = nodeId?.let { base.node(it) }
+            ?: base.nodes.firstOrNull { personId != null && personId in it.persons }
+            ?: base.nodes.firstOrNull()
+            ?: throw IOException("行程里没有可打卡的节点")
+
+        fun makeScheme(
+            id: String,
+            label: String,
+            actions: List<RepairAction>,
+            sacrifice: String,
+        ): RepairScheme {
+            val after = applyActions(base, actions)
+            val locked = base.nodes.filter { it.confirmed }
+            val kept = locked.count { node ->
+                val now = after.node(node.id)
+                now != null && now.start == node.start && now.end == node.end
+            }
+            val keepRate = if (locked.isEmpty()) 1.0 else kept.toDouble() / locked.size
+            return RepairScheme(
+                id = id,
+                label = label,
+                keepRate = keepRate,
+                changedCount = actions.size,
+                actions = actions,
+                sacrifice = sacrifice,
+            )
+        }
+
+        if (minutes <= 0) {
+            return CheckinResult(
+                nodeId = target.id,
+                nodeTitle = target.title,
+                status = "on_time",
+                minutes = 0,
+                message = "已记录到达：${target.title}",
+                impact = null,
+                schemes = emptyList(),
+                blockedNode = null,
+            )
+        }
+
+        val schemes = mutableListOf<RepairScheme>()
+        if (target.durationMin - minutes >= 10) {
+            schemes += makeScheme(
+                id = "A",
+                label = "缩短当前停留",
+                actions = listOf(
+                    RepairAction(
+                        nodeId = target.id,
+                        action = "trim",
+                        payload = mapOf("minutes" to minutes.toString()),
+                        reason = "把「${target.title}」的停留缩短 $minutes 分钟",
+                        sacrifice = "少待 $minutes 分钟",
+                    ),
+                ),
+                sacrifice = "少待 $minutes 分钟",
+            )
+        }
+
+        val affected = base.nodes.filter { it.start >= target.start }
+        if (affected.isNotEmpty() && affected.none { it.confirmed }) {
+            val shifts = affected.map { node ->
+                RepairAction(
+                    nodeId = node.id,
+                    action = "shift",
+                    payload = mapOf("minutes" to minutes.toString()),
+                    reason = "整体后移 $minutes 分钟",
+                    sacrifice = "",
+                )
+            }
+            schemes += makeScheme("B", "整体顺延", shifts, "")
+        }
+
+        if (!target.confirmed) {
+            schemes += makeScheme(
+                id = "C",
+                label = "跳过当前",
+                actions = listOf(
+                    RepairAction(
+                        nodeId = target.id,
+                        action = "drop",
+                        payload = emptyMap(),
+                        reason = "跳过「${target.title}」",
+                        sacrifice = "放弃${target.title}",
+                    ),
+                ),
+                sacrifice = "放弃${target.title}",
+            )
+        }
+
+        val who = if (!personId.isNullOrBlank()) "$personId 晚到" else "你比计划晚到"
+        return CheckinResult(
+            nodeId = target.id,
+            nodeTitle = target.title,
+            status = if (!personId.isNullOrBlank()) "member_late" else "late",
+            minutes = minutes,
+            message = if (schemes.isEmpty()) {
+                "$who $minutes 分钟，但没有安全的自动改法，需要你手动决定。"
+            } else {
+                "$who $minutes 分钟，下面是可以选的处理方式。"
+            },
+            impact = null,
+            schemes = schemes,
+            blockedNode = if (schemes.isEmpty()) target.id else null,
+        )
     }
 
     override suspend fun applyScheme(scheme: RepairScheme): Plan {
@@ -244,6 +364,7 @@ class RemotePlanRepository(
         val raw = data.getJSONObject("plan")
         // 切到新生成的计划：后面所有请求都要打到它身上
         planId = raw.optString("planId", planId).ifBlank { planId }
+        planVersion = raw.optInt("version", 1)
         savePlan(raw)
         return PlanJson.parsePlan(raw)
     }
@@ -255,6 +376,19 @@ class RemotePlanRepository(
         val schemes = JSONArray().put("A").put("B").put("C")
         val body = JSONObject().put("event", eventBody(scenario)).put("schemes", schemes)
         return PlanJson.parseRepair(request("POST", "/api/plan/$planId/repair", body))
+    }
+
+    override suspend fun checkin(
+        nodeId: String?,
+        minutes: Int,
+        personId: String?,
+    ): CheckinResult {
+        val body = JSONObject()
+            .put("nodeId", nodeId.orEmpty())
+            .put("minutes", minutes)
+            .put("memberId", settings.memberId)
+        if (!personId.isNullOrBlank()) body.put("personId", personId)
+        return PlanJson.parseCheckin(request("POST", "/api/plan/$planId/checkin", body))
     }
 
     override suspend fun applyScheme(scheme: RepairScheme): Plan {
@@ -278,6 +412,7 @@ class RemotePlanRepository(
         val data = request("POST", "/api/plan/$planId/apply", body)
         val raw = data.getJSONObject("plan")
         savePlan(raw)
+        planVersion = raw.optInt("version", planVersion + 1)
         return PlanJson.parsePlan(raw)
     }
 
@@ -285,6 +420,7 @@ class RemotePlanRepository(
         val data = request("POST", "/api/plan/$planId/undo")
         val raw = data.getJSONObject("plan")
         savePlan(raw)
+        planVersion = raw.optInt("version", planVersion)
         return PlanJson.parsePlan(raw)
     }
 

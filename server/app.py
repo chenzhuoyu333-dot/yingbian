@@ -24,6 +24,7 @@ from yingbian.ai import (
 )
 from yingbian.collab import SCHEMES, STATE as COLLAB
 from yingbian.generate import Preferences, generate
+from yingbian.location import checkin as location_checkin
 from yingbian.models import Plan, PlanError
 from yingbian.repair import apply_actions
 from yingbian.weather import fetch_weather
@@ -371,6 +372,37 @@ def post_event(plan_id: str, body: dict = Body(...)):
     event = Event.from_dict(body)
     report = propagate(plan, event)
     return _ok(report.to_dict())
+
+
+@app.post("/api/plan/{plan_id}/checkin")
+def post_checkin(plan_id: str, body: dict = Body(...)):
+    """到达打卡：准时只确认；晚到则返回影响和可执行方案。
+
+    位置只作为用户主动打卡的上下文，不在这里做持续定位或轨迹共享。
+    """
+    plan = _plan_or_404(plan_id)
+    if plan is None:
+        return _error("NOT_FOUND", "计划不存在", 404)
+    try:
+        minutes = int(body.get("minutes") or 0)
+    except (TypeError, ValueError):
+        return _error("BAD_MINUTES", "晚到分钟数必须是整数")
+    if minutes < 0 or minutes > 180:
+        return _error("BAD_MINUTES", "晚到分钟数应在 0–180 之间")
+
+    node_id = str(body.get("nodeId") or "").strip() or None
+    person_id = str(body.get("personId") or "").strip() or None
+    try:
+        result = location_checkin(plan, node_id, minutes, person_id)
+    except ValueError as exc:
+        return _error("BAD_CHECKIN", str(exc))
+
+    member = COLLAB.member(plan_id, str(body.get("memberId") or "").strip())
+    if member is not None:
+        where = result.get("nodeTitle") or "行程"
+        detail = "准时到达" if minutes == 0 else f"晚到 {minutes} 分钟"
+        COLLAB.record(plan_id, member.id, member.name, f"{member.name} 在「{where}」打卡：{detail}")
+    return _ok(result)
 
 
 def _describe_event(body: dict) -> str:

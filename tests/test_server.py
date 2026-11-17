@@ -94,6 +94,33 @@ class ServerContractTest(unittest.TestCase):
         version = self.client.get(f"/api/plan/{self.plan_id}").json()["data"]["version"]
         self.assertEqual(version, 1)
 
+    def test_checkin_on_time(self):
+        body = self.client.post(
+            f"/api/plan/{self.plan_id}/checkin",
+            json={"nodeId": "n_tea", "minutes": 0, "memberId": "m_me"},
+        ).json()
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["data"]["status"], "on_time")
+        self.assertEqual(body["data"]["schemes"], [])
+
+    def test_checkin_late_returns_schemes(self):
+        body = self.client.post(
+            f"/api/plan/{self.plan_id}/checkin",
+            json={"nodeId": "n_tea", "minutes": 20, "memberId": "m_me"},
+        ).json()
+        data = body["data"]
+        self.assertEqual(data["status"], "late")
+        self.assertIn("A", [scheme["id"] for scheme in data["schemes"]])
+        self.assertNotIn("B", [scheme["id"] for scheme in data["schemes"]])
+
+    def test_checkin_rejects_out_of_range_minutes(self):
+        response = self.client.post(
+            f"/api/plan/{self.plan_id}/checkin",
+            json={"nodeId": "n_tea", "minutes": 181},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "BAD_MINUTES")
+
     def test_self_test_page_served(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)

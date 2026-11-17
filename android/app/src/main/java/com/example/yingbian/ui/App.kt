@@ -187,6 +187,14 @@ fun YingBianRoot() {
                                 onRain = { scope.launch { controller.simulateRain() } },
                                 onImpact = { controller.openImpact() },
                                 onSchemes = { scope.launch { controller.loadSchemes() } },
+                                onDepart = {
+                                    Toast.makeText(
+                                        context,
+                                        "已记录出发；到下一站时点「我到了」",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                },
+                                onCheckin = { controller.openCheckin() },
                                 weatherLocation = controller.weatherLocation,
                                 weatherError = controller.weatherError,
                                 weatherLoading = controller.weatherLoading,
@@ -251,6 +259,22 @@ fun YingBianRoot() {
             message = message,
             onUnlock = { scope.launch { controller.unlockAndRepair() } },
             onKeep = { controller.dismissBlocked() },
+        )
+    }
+
+    if (controller.checkinOpen && currentPlan != null) {
+        CheckinSheet(
+            plan = currentPlan,
+            result = controller.checkinResult,
+            loading = controller.checkinLoading,
+            error = controller.checkinError,
+            selectedSchemeId = controller.checkinSelectedId,
+            onCheckin = { nodeId, minutes, personId ->
+                scope.launch { controller.submitCheckin(nodeId, minutes, personId) }
+            },
+            onSelectScheme = { controller.selectCheckinScheme(it) },
+            onApply = { scope.launch { controller.applyCheckinScheme() } },
+            onDismiss = { controller.closeCheckin() },
         )
     }
 

@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.yingbian.data.ActivityRow
+import com.example.yingbian.data.CheckinResult
 import com.example.yingbian.data.GeneratePrefs
 import com.example.yingbian.data.Impact
 import com.example.yingbian.data.MemberInfo
@@ -65,6 +66,8 @@ fun PlanScreen(
     onRain: () -> Unit,
     onImpact: () -> Unit,
     onSchemes: () -> Unit,
+    onDepart: () -> Unit = {},
+    onCheckin: () -> Unit = {},
     onVote: () -> Unit = {},
     onActivity: () -> Unit = {},
     memberCount: Int = 0,
@@ -116,6 +119,8 @@ fun PlanScreen(
             onRain = onRain,
             onImpact = onImpact,
             onSchemes = onSchemes,
+            onDepart = onDepart,
+            onCheckin = onCheckin,
         )
     }
 }
@@ -325,28 +330,48 @@ private fun PlanBottomBar(
     onRain: () -> Unit,
     onImpact: () -> Unit,
     onSchemes: () -> Unit,
+    onDepart: () -> Unit,
+    onCheckin: () -> Unit,
 ) {
     Surface(color = Color.White, shadowElevation = 10.dp) {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-            if (loading) {
-                Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                        color = Color.White,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("正在重算…")
-                }
-            } else if (impact == null) {
-                Button(
-                    onClick = onRain,
-                    enabled = !offline,
-                    modifier = Modifier.fillMaxWidth(),
+            val enabled = !loading && !offline
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onDepart,
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
                 ) {
-                    Text(if (offline) "离线，无法重算" else "模拟下雨（15:00–17:00）")
+                    Text("我出发了", fontSize = 12.sp)
                 }
-            } else {
+                Button(
+                    onClick = onCheckin,
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
+                ) {
+                    Text("我到了", fontSize = 12.sp)
+                }
+                OutlinedButton(
+                    onClick = onRain,
+                    enabled = enabled,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
+                ) {
+                    Text(if (impact == null) "下雨演示" else "再算降雨", fontSize = 12.sp)
+                }
+            }
+            if (loading) {
+                Text(
+                    text = "正在重算…",
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    fontSize = 11.sp,
+                    color = Muted,
+                    textAlign = TextAlign.Center,
+                )
+            } else if (impact != null) {
+                Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(
                         onClick = onImpact,
@@ -361,6 +386,228 @@ private fun PlanBottomBar(
                         modifier = Modifier.weight(1f),
                     ) {
                         Text("看方案")
+                    }
+                }
+            } else if (offline) {
+                Text(
+                    text = "离线，只能查看缓存，不能重算或打卡",
+                    modifier = Modifier.padding(top = 6.dp),
+                    fontSize = 11.sp,
+                    color = Muted,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 主动到达打卡。位置只用于这一次打卡，不持续定位、不共享轨迹。
+ * 晚到后才展示可执行方案，用户确认前不改行程。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CheckinSheet(
+    plan: Plan,
+    result: CheckinResult?,
+    loading: Boolean,
+    error: String?,
+    selectedSchemeId: String?,
+    onCheckin: (nodeId: String, minutes: Int, personId: String?) -> Unit,
+    onSelectScheme: (String) -> Unit,
+    onApply: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var nodeId by remember(plan.planId) {
+        mutableStateOf(
+            plan.nodes.firstOrNull { !it.confirmed }?.id
+                ?: plan.nodes.firstOrNull()?.id.orEmpty(),
+        )
+    }
+    var minutes by remember { mutableStateOf(0) }
+    var memberLate by remember { mutableStateOf(false) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Text("我到了", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
+            Text(
+                "只记录这一次主动打卡，不共享位置轨迹；晚到方案要你确认后才会改行程。",
+                fontSize = 11.sp,
+                color = Muted,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+            if (result == null) {
+                Text("到达哪个节点", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                Spacer(Modifier.height(6.dp))
+                plan.nodes.forEach { node ->
+                    val picked = node.id == nodeId
+                    val label = "${node.start}  ${node.title}${if (node.confirmed) "  · 已锁定" else ""}"
+                    if (picked) {
+                        Button(
+                            onClick = { nodeId = node.id },
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        ) {
+                            Text(label, fontSize = 12.sp, modifier = Modifier.fillMaxWidth())
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = { nodeId = node.id },
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                        ) {
+                            Text(label, fontSize = 12.sp, modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Text("谁晚到", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { memberLate = false },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(if (memberLate) "我晚到" else "✓ 我晚到", fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = { memberLate = true },
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(if (memberLate) "✓ 同行人晚到" else "同行人晚到", fontSize = 12.sp)
+                    }
+                }
+                if (memberLate) {
+                    Text(
+                        "只同步“同行人晚到”这个状态，不发送对方位置。",
+                        fontSize = 10.sp,
+                        color = Muted,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Text("晚到多久", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(0 to "准时", 10 to "10 分", 20 to "20 分", 30 to "30 分").forEach { (value, label) ->
+                        if (minutes == value) {
+                            Button(
+                                onClick = { minutes = value },
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 8.dp),
+                            ) {
+                                Text(label, fontSize = 11.sp)
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = { minutes = value },
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(horizontal = 2.dp, vertical = 8.dp),
+                            ) {
+                                Text(label, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+
+                if (!error.isNullOrBlank()) {
+                    Text(
+                        "打卡失败：$error",
+                        fontSize = 12.sp,
+                        color = ConflictOrange,
+                        modifier = Modifier.padding(top = 10.dp),
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
+                Button(
+                    onClick = {
+                        onCheckin(
+                            nodeId,
+                            minutes,
+                            if (memberLate) "同行人" else null,
+                        )
+                    },
+                    enabled = !loading && nodeId.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    if (loading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = Color.White,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(if (loading) "正在计算影响…" else "确认到达")
+                }
+                TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                    Text("取消")
+                }
+            } else {
+                Text(result.message, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                result.impact?.let { impact ->
+                    Text(
+                        "影响 ${impact.affectedCount}/${impact.totalCount} 个节点 · ${pathLabel(impact.path)}",
+                        fontSize = 11.sp,
+                        color = Muted,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+
+                if (result.schemes.isEmpty()) {
+                    Text(
+                        "没有安全的自动改法。你可以先不改，晚一点再手动调整。",
+                        fontSize = 13.sp,
+                        color = Muted,
+                    )
+                } else {
+                    result.schemes.forEach { scheme ->
+                        SchemeCard(
+                            scheme = scheme,
+                            plan = plan,
+                            selected = scheme.id == selectedSchemeId,
+                            onClick = { onSelectScheme(scheme.id) },
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+
+                if (!error.isNullOrBlank()) {
+                    Text(
+                        "应用失败：$error",
+                        fontSize = 12.sp,
+                        color = ConflictOrange,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(
+                        onClick = onDismiss,
+                        enabled = !loading,
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(if (result.schemes.isEmpty()) "知道了" else "先不改")
+                    }
+                    if (result.schemes.isNotEmpty()) {
+                        Button(
+                            onClick = onApply,
+                            enabled = !loading && selectedSchemeId != null,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text(if (loading) "应用中…" else "采用选中方案")
+                        }
                     }
                 }
             }

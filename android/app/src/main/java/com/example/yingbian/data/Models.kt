@@ -96,6 +96,18 @@ data class RepairResult(
     val message: String,
 )
 
+/** 一次主动打卡的结果；准时没有方案，晚到才带影响和可执行方案。 */
+data class CheckinResult(
+    val nodeId: String,
+    val nodeTitle: String,
+    val status: String,
+    val minutes: Int,
+    val message: String,
+    val impact: Impact?,
+    val schemes: List<RepairScheme>,
+    val blockedNode: String?,
+)
+
 /**
  * 生成行程的偏好。字段名与后端 /api/generate 的请求体一一对应。
  * 全部有默认值，界面上只需要改用户关心的几项。
@@ -201,6 +213,14 @@ fun applyActions(plan: Plan, actions: List<RepairAction>): Plan {
                             sacrifice = alternative.sacrifice,
                         )
                     }
+                }
+            }
+
+            "trim" -> {
+                val minutes = action.payload["minutes"]?.toIntOrNull() ?: 0
+                nodes.map { node ->
+                    if (node.id != action.nodeId) node
+                    else node.copy(start = node.startWithShift(minutes))
                 }
             }
 
@@ -315,22 +335,7 @@ object PlanJson {
 
     fun parseRepair(data: JSONObject): RepairResult {
         val schemes = data.optJSONArray("schemes")?.objects().orEmpty().map { item ->
-            RepairScheme(
-                id = item.text("id"),
-                label = item.text("label"),
-                keepRate = item.optDouble("keepRate", 1.0),
-                changedCount = item.optInt("changedCount", 0),
-                actions = item.optJSONArray("actions")?.objects().orEmpty().map { action ->
-                    RepairAction(
-                        nodeId = action.text("nodeId"),
-                        action = action.text("action"),
-                        payload = action.optJSONObject("payload")?.stringMap().orEmpty(),
-                        reason = action.text("reason"),
-                        sacrifice = action.text("sacrifice"),
-                    )
-                },
-                sacrifice = item.text("sacrifice"),
-            )
+            parseScheme(item)
         }
         return RepairResult(
             status = data.text("status").ifBlank { "ok" },
@@ -339,6 +344,34 @@ object PlanJson {
             message = data.text("message"),
         )
     }
+
+    private fun parseScheme(item: JSONObject): RepairScheme = RepairScheme(
+        id = item.text("id"),
+        label = item.text("label"),
+        keepRate = item.optDouble("keepRate", 1.0),
+        changedCount = item.optInt("changedCount", 0),
+        actions = item.optJSONArray("actions")?.objects().orEmpty().map { action ->
+            RepairAction(
+                nodeId = action.text("nodeId"),
+                action = action.text("action"),
+                payload = action.optJSONObject("payload")?.stringMap().orEmpty(),
+                reason = action.text("reason"),
+                sacrifice = action.text("sacrifice"),
+            )
+        },
+        sacrifice = item.text("sacrifice"),
+    )
+
+    fun parseCheckin(data: JSONObject): CheckinResult = CheckinResult(
+        nodeId = data.text("nodeId"),
+        nodeTitle = data.text("nodeTitle"),
+        status = data.text("status").ifBlank { "on_time" },
+        minutes = data.optInt("minutes", 0),
+        message = data.text("message"),
+        impact = data.optJSONObject("impact")?.let { parseImpact(it) },
+        schemes = data.optJSONArray("schemes")?.objects().orEmpty().map { parseScheme(it) },
+        blockedNode = data.text("blockedNode").ifBlank { null },
+    )
 
     fun parseWeather(data: JSONObject): Weather = Weather(
         source = data.text("source"),

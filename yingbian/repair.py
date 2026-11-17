@@ -293,6 +293,12 @@ def _apply_action(node: Node, action: Action, alt: Alternative | None) -> None:
         node.sacrifice = alt.sacrifice
         node.contact = alt.contact or node.contact
         node.resolved = True
+    elif action.action == "trim":
+        # 用户晚到时，用缩短当前停留来吸收延迟；开始时间后移，结束时间不变。
+        minutes = int(action.payload["minutes"])
+        if minutes <= 0 or minutes >= node.duration:
+            raise ValueError("trim 分钟数必须小于当前停留时长")
+        node.start += minutes
     elif action.action == "drop":
         node.dropped = True
     else:

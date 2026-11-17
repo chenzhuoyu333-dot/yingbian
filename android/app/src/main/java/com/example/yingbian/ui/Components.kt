@@ -79,6 +79,7 @@ fun actionSummary(action: RepairAction, plan: Plan): String {
         "replace" -> "$from → ${action.payload["toTitle"] ?: "备选"}"
         "drop" -> "$from：取消"
         "shift" -> "$from：后移 ${action.payload["minutes"] ?: "0"} 分钟"
+        "trim" -> "$from：停留缩短 ${action.payload["minutes"] ?: "0"} 分钟"
         else -> "$from：${action.reason}"
     }
 }

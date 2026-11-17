@@ -1,6 +1,7 @@
 # 应变 · W1 算法 + W2 接口 / Android 客户端
 
-按 `W1施工图` 实现的 schema、四态传播、`shift/replace/drop` 修复，加上 `W2施工图` 的 6 个接口。
+按 `W1施工图` 实现的 schema、四态传播、`shift/replace/trim/drop` 修复，加上 `W2施工图` 的 6 个接口，
+以及“到达打卡 → 晚到影响 → 用户确认后改行程”的位置感知链路。
 天气已接和风（`QWEATHER_KEY`，没配就返回明确标注的演示数据）。
 Android 端在 `android/`，分 emulator（离线 mock）和 lan（连后端）两个包；
 地址可在 App 的「连接设置」里改并测试连接，不用为换 IP 重新打包。
@@ -54,7 +55,7 @@ python -m yingbian case T1 --repair --scheme B
 python -m unittest discover -s tests -v
 ```
 
-当前 23 个测试：schema、T1–T4、6 个接口、天气（演示/真实/失败降级）、自测页与重置。
+当前 82 个测试：schema、T1–T4、6 个接口、位置打卡、天气（演示/真实/失败降级）、自测页与重置。
 
 ## Android 客户端
 
@@ -148,12 +149,39 @@ python -m server.app
 | GET | `/api/plan/{planId}` | 取计划 |
 | POST | `/api/plan/{planId}/event` | 四态、shifts、ratio、path |
 | POST | `/api/plan/{planId}/repair` | 三方案 / blocked |
+| POST | `/api/plan/{planId}/checkin` | 到达打卡；准时确认，晚到给影响和方案 |
 | POST | `/api/plan/{planId}/apply` | 应用方案，版本 +1 |
 | POST | `/api/plan/{planId}/undo` | 撤销 |
 | GET | `/api/weather?lat=&lng=` | 天气（真实优先，失败降级并标注） |
 | POST | `/api/reset` | 复位到版本 1，演示前清场用 |
 
 演示 T4 时先用 `POST /api/debug/lock` 锁日落点，再发降雨。
+
+## 位置打卡（主动、不共享轨迹）
+
+只做前台一次性打卡，不做后台持续定位、地理围栏或同行人实时坐标。
+
+```powershell
+$body = @{
+  nodeId = "n_tea"
+  minutes = 20
+  memberId = "m_me"
+} | ConvertTo-Json
+
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/api/plan/p_sat_guzhen/checkin" `
+  -Method Post -ContentType "application/json" -Body $body
+```
+
+- `minutes = 0`：返回 `on_time`，只记录“已到达”，不改行程。
+- 本人晚到：返回 `late`；同行人晚到时再传 `personId`，返回 `member_late`。
+- 方案 A：缩短当前停留，后续完全不动。
+- 方案 B：整体顺延，只在受影响节点全部未锁定时提供，绝不移走锁定项。
+- 方案 C：跳过当前，只在当前节点未锁定时提供。
+- 方案只是建议；用户点“采用”后才写回计划，之后可以撤销。
+
+Android 行程页底部有「我出发了 / 我到了」。「我出发了」目前只做本地提示；
+「我到了」选择节点、本人/同行人、晚到 0/10/20/30 分钟后调用该接口。
 
 ## 天气
 

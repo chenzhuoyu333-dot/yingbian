@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.example.yingbian.data.ActivityRow
 import com.example.yingbian.data.ApiSettings
+import com.example.yingbian.data.CheckinResult
 import com.example.yingbian.data.Impact
 import com.example.yingbian.data.DemoScenario
 import com.example.yingbian.data.GeneratePrefs
@@ -83,6 +84,16 @@ class PlanController(
     var todoDone by mutableStateOf<Set<String>>(emptySet())
         private set
     var lastScheme by mutableStateOf<RepairScheme?>(null)
+        private set
+    var checkinResult by mutableStateOf<CheckinResult?>(null)
+        private set
+    var checkinOpen by mutableStateOf(false)
+        private set
+    var checkinLoading by mutableStateOf(false)
+        private set
+    var checkinError by mutableStateOf<String?>(null)
+        private set
+    var checkinSelectedId by mutableStateOf<String?>(null)
         private set
     var eventTitle by mutableStateOf("降雨 15:00–17:00")
         private set
@@ -200,6 +211,7 @@ class PlanController(
         error = null
         empty = false
         offline = false
+        clearCheckin()
         try {
             plan = repo.loadPlan()
             loadWeather()
@@ -239,6 +251,7 @@ class PlanController(
         empty = false
         offline = false
         generateNote = null
+        clearCheckin()
         try {
             plan = repo.generate(prefs)
             impact = null
@@ -320,9 +333,72 @@ class PlanController(
         }
     }
 
+    fun openCheckin() {
+        if (plan == null) return
+        checkinResult = null
+        checkinError = null
+        checkinSelectedId = null
+        checkinOpen = true
+    }
+
+    fun closeCheckin() {
+        if (checkinLoading) return
+        checkinOpen = false
+        checkinError = null
+    }
+
+    suspend fun submitCheckin(nodeId: String, minutes: Int, personId: String? = null) {
+        checkinLoading = true
+        checkinError = null
+        try {
+            val result = repo.checkin(nodeId, minutes, personId)
+            checkinResult = result
+            checkinSelectedId = result.schemes.firstOrNull()?.id
+        } catch (exception: Exception) {
+            checkinError = exception.message ?: "打卡失败"
+        } finally {
+            checkinLoading = false
+        }
+    }
+
+    fun selectCheckinScheme(id: String) {
+        checkinSelectedId = id
+    }
+
+    suspend fun applyCheckinScheme() {
+        val result = checkinResult ?: return
+        val scheme = result.schemes.firstOrNull { it.id == checkinSelectedId } ?: return
+        val base = plan ?: return
+        checkinLoading = true
+        checkinError = null
+        try {
+            val updated = repo.applyScheme(scheme)
+            plan = updated
+            planBeforeApply = base
+            lastScheme = scheme
+            notifications = buildNotifications(scheme, base)
+            notificationSelection = notifications.map { it.id }.toSet()
+            todos = emptyList()
+            todoDone = emptySet()
+            impact = null
+            schemes = emptyList()
+            selectedSchemeId = null
+            eventTitle = "到达晚到 ${result.minutes} 分钟"
+            screen = AppScreen.Notify
+            checkinOpen = false
+            checkinResult = null
+            checkinSelectedId = null
+        } catch (exception: Exception) {
+            checkinError = exception.message ?: "应用方案失败"
+        } finally {
+            checkinLoading = false
+        }
+    }
+
     suspend fun undo() {
         loading = true
         error = null
+        clearCheckin()
         try {
             plan = repo.undo()
             impact = null
@@ -474,6 +550,7 @@ class PlanController(
         offline = false
         scenario = DemoScenario.RAIN
         eventTitle = "降雨 15:00–17:00"
+        clearCheckin()
         try {
             plan = repo.reset()
             impact = null
@@ -502,6 +579,7 @@ class PlanController(
             val text = when (action.action) {
                 "replace" -> "$fromTitle 已改去「$toTitle」"
                 "drop" -> "$fromTitle 已取消"
+                "trim" -> "$fromTitle 停留缩短 ${action.payload["minutes"] ?: "0"} 分钟"
                 else -> "$fromTitle 后移 ${action.payload["minutes"] ?: "0"} 分钟"
             }
             val level = when {
@@ -555,6 +633,13 @@ class PlanController(
                 script = "我们临时调整了行程，$title 这次先不去了，抱歉。",
             )
 
+            action.action == "trim" -> TodoRow(
+                id = index.toString(),
+                text = "告知同行：$title 停留缩短 ${action.payload["minutes"] ?: "0"} 分钟",
+                phone = "",
+                script = "我们到得晚了一点，$title 的停留会缩短 ${action.payload["minutes"] ?: "0"} 分钟。",
+            )
+
             else -> TodoRow(
                 id = index.toString(),
                 text = "告知同行：$title 后移 ${action.payload["minutes"] ?: "0"} 分钟",
@@ -562,5 +647,13 @@ class PlanController(
                 script = "我们临时调整了时间，$title 延后 ${action.payload["minutes"] ?: "0"} 分钟。",
             )
         }
+    }
+
+    private fun clearCheckin() {
+        checkinOpen = false
+        checkinResult = null
+        checkinError = null
+        checkinSelectedId = null
+        checkinLoading = false
     }
 }
