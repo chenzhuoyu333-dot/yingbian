@@ -11,7 +11,7 @@ Android 端在 `android/`，分 emulator（离线 mock）和 lan（连后端）�
 
 ## 30 秒跑起来
 
-不会敲命令：直接双击根目录的 `check-W1.bat`，它会跑完 23 个单元测试和 7 项接口巡检，
+不会敲命令：直接双击根目录的 `check-W1.bat`，它会跑完全部单元测试和 7 项接口巡检，
 最后一行显示「7/7 项通过」就是 W1 验收 OK。
 
 ```powershell
@@ -55,12 +55,12 @@ python -m yingbian case T1 --repair --scheme B
 python -m unittest discover -s tests -v
 ```
 
-当前 82 个测试：schema、T1–T4、6 个接口、位置打卡、天气（演示/真实/失败降级）、自测页与重置。
+当前 86 个测试：schema、T1–T4、接口、首页计划、两套方案、位置打卡、天气降级、自测页与重置。
 
 ## Android 客户端
 
 `android/` 是 Compose 单 Activity 客户端，已实现 W2 的 S1–S5：
-计划图、三方案对比、影响面板、通知预览、待办清单，以及空/加载/失败/阻断/离线状态。
+行程首页、计划图、两套方案对比、影响面板、通知预览、待办清单，以及空/加载/失败/阻断/离线状态。
 
 ```powershell
 cd android
@@ -128,9 +128,8 @@ cd android
 
 | 方案 | shift | replace | drop | 性格 |
 |---|---|---|---|---|
-| A 保时间 | 0.2 | 100 | 100 | 宁可挪，也不换点 |
-| B 保体验 | 1 | 50 | 100 | 优先换备选，尽量不删 |
-| C 保少改动 | 3 | 60 | 200 | 能不动就不动 |
+| A 保时间 | 0.2 | 300 | 1500 | 能挪就挪，绝不换点、不删点 |
+| B 保体验 | 4 | 50 | 1200 | 有备选就换；没备选宁可挪也不删 |
 
 返回：`actions + keepRate + sacrifice + changedCount`。
 
@@ -148,7 +147,7 @@ python -m server.app
 | GET | `/` | 网页自测台，点按钮看每个接口的返回 |
 | GET | `/api/plan/{planId}` | 取计划 |
 | POST | `/api/plan/{planId}/event` | 四态、shifts、ratio、path |
-| POST | `/api/plan/{planId}/repair` | 三方案 / blocked |
+| POST | `/api/plan/{planId}/repair` | 两套方案 / blocked |
 | POST | `/api/plan/{planId}/checkin` | 到达打卡；准时确认，晚到给影响和方案 |
 | POST | `/api/plan/{planId}/apply` | 应用方案，版本 +1 |
 | POST | `/api/plan/{planId}/undo` | 撤销 |
@@ -176,8 +175,7 @@ Invoke-RestMethod `
 - `minutes = 0`：返回 `on_time`，只记录“已到达”，不改行程。
 - 本人晚到：返回 `late`；同行人晚到时再传 `personId`，返回 `member_late`。
 - 方案 A：缩短当前停留，后续完全不动。
-- 方案 B：整体顺延，只在受影响节点全部未锁定时提供，绝不移走锁定项。
-- 方案 C：跳过当前，只在当前节点未锁定时提供。
+- 方案 B：整体顺延，只在受影响节点全部未锁定时提供；若顺延不安全，则改为“跳过当前”。两者都不会自动移走锁定项。
 - 方案只是建议；用户点“采用”后才写回计划，之后可以撤销。
 
 Android 行程页底部有「我出发了 / 我到了」。「我出发了」目前只做本地提示；
@@ -198,7 +196,7 @@ python -m server.app
 ```
 fixtures/plan-saturday.json     # GET /plan
 fixtures/event-rain-T1.json     # T1 四态
-fixtures/repair-T1.json         # 三方案 + actions
+fixtures/repair-T1.json         # 两套方案 + actions
 fixtures/event-cancel-T3.json   # T3 餐厅取消
 fixtures/repair-T3.json         # T3 只改 1 处
 fixtures/blocked-T4.json        # blocked 弹窗

@@ -51,6 +51,7 @@ import com.example.yingbian.data.Impact
 import com.example.yingbian.data.MemberInfo
 import com.example.yingbian.data.Plan
 import com.example.yingbian.data.PlanNode
+import com.example.yingbian.data.PlanSummary
 import com.example.yingbian.data.RepairScheme
 import com.example.yingbian.data.VoteState
 import com.example.yingbian.data.Weather
@@ -339,7 +340,7 @@ private fun PlanBottomBar(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = onDepart,
-                    enabled = enabled,
+                    enabled = !loading,
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
                 ) {
@@ -353,14 +354,6 @@ private fun PlanBottomBar(
                 ) {
                     Text("我到了", fontSize = 12.sp)
                 }
-                OutlinedButton(
-                    onClick = onRain,
-                    enabled = enabled,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
-                ) {
-                    Text(if (impact == null) "下雨演示" else "再算降雨", fontSize = 12.sp)
-                }
             }
             if (loading) {
                 Text(
@@ -370,7 +363,16 @@ private fun PlanBottomBar(
                     color = Muted,
                     textAlign = TextAlign.Center,
                 )
-            } else if (impact != null) {
+            } else if (impact == null) {
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = onRain,
+                    enabled = !offline,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(if (offline) "离线，无法重算" else "报告变化：15:00 起下雨")
+                }
+            } else {
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(
@@ -388,13 +390,14 @@ private fun PlanBottomBar(
                         Text("看方案")
                     }
                 }
-            } else if (offline) {
-                Text(
-                    text = "离线，只能查看缓存，不能重算或打卡",
-                    modifier = Modifier.padding(top = 6.dp),
-                    fontSize = 11.sp,
-                    color = Muted,
-                )
+                if (offline) {
+                    Text(
+                        text = "离线：只能查看缓存，不能重算或打卡",
+                        modifier = Modifier.padding(top = 6.dp),
+                        fontSize = 11.sp,
+                        color = Muted,
+                    )
+                }
             }
         }
     }
@@ -630,7 +633,7 @@ fun SchemeScreen(
     }
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
-            text = "按“保时间 / 保体验 / 保少改动”生成，选一套采用",
+            text = "按“保时间 / 保体验”生成两套，选一套采用",
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             fontSize = 12.sp,
             color = Muted,
@@ -945,7 +948,7 @@ fun VoteSheet(
     onVote: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val label = mapOf("A" to "保时间", "B" to "保体验", "C" to "保少改动")
+    val label = mapOf("A" to "保时间", "B" to "保体验")
     val myVote = vote.votes.entries.firstOrNull { it.value.isNotBlank() }?.value
 
     AlertDialog(
@@ -1054,6 +1057,160 @@ fun ActivityDialog(
             }
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+    )
+}
+
+/**
+ * 首页：我的计划。
+ *
+ * 这一屏把"一次性行程"变成"行程库"：
+ *   · 中间是历史行程，最近改过的排最前
+ *   · 右上角新建 → 一句话交给 AI，生成完直接进这份行程
+ */
+@Composable
+fun HomeScreen(
+    plans: List<PlanSummary>,
+    loading: Boolean,
+    onOpen: (String) -> Unit,
+    onCreate: () -> Unit,
+    onDelete: (String) -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("我的计划", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
+            Spacer(Modifier.weight(1f))
+            Button(onClick = onCreate) { Text("＋ 新建", fontSize = 13.sp) }
+        }
+
+        if (plans.isEmpty() && !loading) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("还没有行程", fontSize = 14.sp, color = Muted)
+                    Spacer(Modifier.height(6.dp))
+                    Text("点右上角「新建」，说一句你想怎么玩", fontSize = 12.sp, color = Muted)
+                }
+            }
+            return@Column
+        }
+
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            items(plans, key = { it.planId }) { item ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color.White,
+                    shape = RoundedCornerShape(16.dp),
+                    shadowElevation = 2.dp,
+                    onClick = { onOpen(item.planId) },
+                ) {
+                    Row(modifier = Modifier.padding(14.dp)) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = item.title,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Ink,
+                            )
+                            Text(
+                                text = buildString {
+                                    append(item.date)
+                                    append(" · ")
+                                    append("${item.nodeCount} 个地点")
+                                    if (item.confirmedCount > 0) append(" · ${item.confirmedCount} 个锁定")
+                                },
+                                fontSize = 11.sp,
+                                color = Muted,
+                                modifier = Modifier.padding(top = 3.dp),
+                            )
+                            Text(
+                                text = if (item.builtin) {
+                                    "内置示范"
+                                } else {
+                                    "更新于 ${item.updatedAt.ifBlank { "刚刚" }} · v${item.version}"
+                                },
+                                fontSize = 10.sp,
+                                color = Muted,
+                                modifier = Modifier.padding(top = 6.dp),
+                            )
+                        }
+                        if (!item.builtin) {
+                            TextButton(onClick = { onDelete(item.planId) }) {
+                                Text("删除", fontSize = 11.sp, color = ConflictOrange)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 新建行程：一句话交给 AI。
+ *
+ * 这里刻意不做表单 —— 表单是"问用户要参数"，对话框是"听用户说需求"。
+ * 解析成什么条件由后端 ai.py 决定，界面只负责把话送出去。
+ */
+@Composable
+fun NewPlanDialog(
+    busy: Boolean,
+    error: String?,
+    onGenerate: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var text by remember { mutableStateOf("") }
+    val samples = listOf(
+        "想拍照、不想早起，别爬山，轻松一点",
+        "下午两点半出发，想看博物馆和咖啡店，人均 40 以内",
+        "一整天都在外面，尽量多去几个地方",
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("说说你想怎么玩") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    text = "AI 会把这句话解析成条件，再从高德检索真实地点排成行程。地点不是模型编的。",
+                    fontSize = 11.sp,
+                    color = Muted,
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    placeholder = { Text("例如：想拍照、不想早起，别爬山", fontSize = 12.sp) },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                )
+                Spacer(Modifier.height(10.dp))
+                Text("试试这些：", fontSize = 11.sp, color = Muted)
+                samples.forEach { sample ->
+                    TextButton(
+                        onClick = { text = sample },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(sample, fontSize = 11.sp, color = Ink, textAlign = TextAlign.Start)
+                    }
+                }
+                if (!error.isNullOrBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text("生成失败：$error", fontSize = 12.sp, color = ConflictOrange)
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onGenerate(text.trim()) }, enabled = !busy && text.isNotBlank()) {
+                Text(if (busy) "生成中…" else "生成行程")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
 

@@ -56,23 +56,28 @@ class GenerateApiTest(unittest.TestCase):
         self.assertTrue(res["ok"], res)
         plan = res["data"]["plan"]
         pid = plan["planId"]
-        self.assertEqual(pid, "p_generated")
+        # 每次生成给唯一 id，否则首页"我的计划"里只有一个，且互相覆盖
+        self.assertTrue(pid.startswith("p_gen_"), pid)
         self.assertGreaterEqual(len(plan["nodes"]), 3)
 
-        # 能被取出来
-        got = self.client.get(f"/api/plan/{pid}").json()
-        self.assertTrue(got["ok"])
-        self.assertEqual(len(got["data"]["plan"]["nodes"]), len(plan["nodes"]))
+        try:
+            # 能被取出来
+            got = self.client.get(f"/api/plan/{pid}").json()
+            self.assertTrue(got["ok"])
+            self.assertEqual(len(got["data"]["plan"]["nodes"]), len(plan["nodes"]))
 
-        # 能直接发事件（这条是重点）
-        ev = self.client.post(f"/api/plan/{pid}/event", json=RAIN).json()
-        self.assertTrue(ev["ok"], ev)
-        self.assertIn("n_", "".join(ev["data"]["states"].keys()))
+            # 能直接发事件（这条是重点）
+            ev = self.client.post(f"/api/plan/{pid}/event", json=RAIN).json()
+            self.assertTrue(ev["ok"], ev)
+            self.assertIn("n_", "".join(ev["data"]["states"].keys()))
 
-        # 能直接求方案
-        rp = self.client.post(f"/api/plan/{pid}/repair", json={"event": RAIN}).json()
-        self.assertTrue(rp["ok"], rp)
-        self.assertIn(rp["data"]["status"], ("ok", "blocked"))
+            # 能直接求方案
+            rp = self.client.post(f"/api/plan/{pid}/repair", json={"event": RAIN}).json()
+            self.assertTrue(rp["ok"], rp)
+            self.assertIn(rp["data"]["status"], ("ok", "blocked"))
+        finally:
+            # 测试里生成会落盘，跑完要删掉，否则 data/plans/ 会被污染
+            self.client.delete(f"/api/plans/{pid}")
 
     def test_generate_returns_generation_meta(self):
         res = self.client.post("/api/generate", json={"city": "杭州"}).json()

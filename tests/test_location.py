@@ -20,9 +20,10 @@ class CheckinTest(unittest.TestCase):
         self.assertEqual(result["status"], "late")
         ids = [scheme["id"] for scheme in result["schemes"]]
         # 茶馆后面有已锁定的返程和晚餐，不能整体顺延。
-        self.assertNotIn("B", ids)
         self.assertIn("A", ids)
-        self.assertIn("C", ids)
+        self.assertIn("B", ids)
+        skip = next(item for item in result["schemes"] if item["id"] == "B")
+        self.assertEqual(skip["label"], "跳过当前")
 
     def test_trim_keeps_following_nodes_in_place(self):
         result = checkin(self.plan, "n_tea", 20)
@@ -38,8 +39,7 @@ class CheckinTest(unittest.TestCase):
     def test_locked_node_is_not_shifted_or_dropped(self):
         result = checkin(self.plan, "n_lunch", 15)
         ids = [scheme["id"] for scheme in result["schemes"]]
-        self.assertNotIn("B", ids)
-        self.assertNotIn("C", ids)
+        self.assertEqual(ids, ["A"])
         for scheme in result["schemes"]:
             for action in scheme["actions"]:
                 self.assertNotEqual(action["action"], "shift")
@@ -57,7 +57,10 @@ class CheckinTest(unittest.TestCase):
         self.assertEqual(result["event"]["nodeId"], "n_tea")
         self.assertEqual(result["impact"]["states"]["n_tea"], "at_risk")
         self.assertIn("p_xiaowang", result["message"])
-        self.assertNotIn("B", [scheme["id"] for scheme in result["schemes"]])
+        self.assertEqual(
+            [scheme["id"] for scheme in result["schemes"]],
+            ["B", "A"],
+        )
 
     def test_unknown_node_raises(self):
         with self.assertRaises(ValueError):

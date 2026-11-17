@@ -177,14 +177,15 @@ def repair(
             candidates: list[tuple[float, int, Action, Alternative | None]] = []
             minutes = _shift_minutes(node, event, state)
             if minutes is not None:
+                shift_cost = minutes * scheme.w_shift + scheme.w_action
                 candidates.append((
-                    minutes * scheme.w_shift,
+                    shift_cost,
                     1,
                     Action(
                         node_id=node.id,
                         action="shift",
                         reason=f"后移 {minutes} 分钟避开降雨",
-                        cost=minutes * scheme.w_shift,
+                        cost=shift_cost,
                         payload={"minutes": minutes},
                         sacrifice="",
                     ),
@@ -193,7 +194,7 @@ def repair(
             for alt in node.alternatives:
                 if not _replace_helps(node, alt, event):
                     continue
-                cost = scheme.w_replace + alt.travel_min * 0.5
+                cost = scheme.w_replace + alt.travel_min * 0.5 + scheme.w_action
                 candidates.append((
                     cost,
                     0,
@@ -213,8 +214,9 @@ def repair(
                 ))
             drop_allowed = not (node.confirmed and state == "at_risk")
             if drop_allowed:
+                drop_cost = scheme.w_drop + scheme.w_action
                 candidates.append((
-                    scheme.w_drop,
+                    drop_cost,
                     2,
                     Action(
                         node_id=node.id,
@@ -224,7 +226,7 @@ def repair(
                             if node.alternatives
                             else ("没有可用的室内备选" if event.type == "rain" else "跳过该节点")
                         ),
-                        cost=scheme.w_drop,
+                        cost=drop_cost,
                         sacrifice=node.sacrifice or f"放弃{node.title}",
                     ),
                     None,

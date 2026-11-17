@@ -72,7 +72,7 @@ class VoteTest(unittest.TestCase):
     def test_tie_falls_back_to_default(self):
         self.state.start_vote("p1", RAIN, default_scheme="B", initiator=self.state.member("p1", "u1"))
         self.state.cast_vote("p1", "u1", "A")
-        self.state.cast_vote("p1", "u2", "C")
+        self.state.cast_vote("p1", "u2", "B")
         round_ = self.state.current_vote("p1")
         self.assertEqual(round_.status, "closed")
         self.assertEqual(round_.winner, "B")
@@ -90,10 +90,10 @@ class VoteTest(unittest.TestCase):
 
     def test_timeout_keeps_current_leader(self):
         self.state.start_vote("p1", RAIN, ttl_sec=10, initiator=self.state.member("p1", "u1"))
-        self.state.cast_vote("p1", "u1", "C")
+        self.state.cast_vote("p1", "u1", "B")
         self.state.rounds["p1"].created_at = time.time() - 11
         round_ = self.state.current_vote("p1")
-        self.assertEqual(round_.winner, "C")
+        self.assertEqual(round_.winner, "B")
         self.assertEqual(round_.decided_by, "majority")
 
     def test_new_vote_cancels_previous(self):
@@ -106,7 +106,7 @@ class VoteTest(unittest.TestCase):
         self.state.start_vote("p1", RAIN, initiator=self.state.member("p1", "u1"))
         self.state.cast_vote("p1", "u1", "A")
         self.state.cast_vote("p1", "u2", "B")
-        _, message = self.state.cast_vote("p1", "u1", "C")
+        _, message = self.state.cast_vote("p1", "u1", "A")
         self.assertIn("已经结束", message)
 
     def test_tally_and_remaining(self):

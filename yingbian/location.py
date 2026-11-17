@@ -12,7 +12,6 @@ from typing import Any
 from .models import Node, Plan
 from .propagate import Event, propagate
 from .repair import Action, RepairResult, apply_actions
-from .rules import SCHEMES
 
 
 MIN_STAY_MINUTES = 10
@@ -39,12 +38,11 @@ def _result(
     plan: Plan,
     started: float,
 ) -> RepairResult:
-    scheme = SCHEMES[key]
     working = apply_actions(plan, [action.to_dict() for action in actions]) if actions else plan.clone()
     return RepairResult(
         status="ok",
         scheme=key,
-        label=label or scheme.label,
+        label=label,
         actions=actions,
         blocked_node=None,
         message="",
@@ -127,7 +125,8 @@ def _scheme_actions(
         node.window_latest is None or node.start + minutes <= node.window_latest
         for node in affected
     )
-    if can_shift and windows_ok:
+    shifted = can_shift and windows_ok
+    if shifted:
         shifts = [
             Action(
                 node_id=node.id,
@@ -141,8 +140,8 @@ def _scheme_actions(
         ]
         schemes.append(_result("B", "整体顺延", shifts, plan, started))
 
-    # C. 跳过当前：不拖延后面，但会放弃当前节点。锁定节点不能这样被跳过。
-    if not target.confirmed:
+    # B. 如果整体顺延不安全，退而求其次：跳过当前。锁定节点不能这样被跳过。
+    if not shifted and not target.confirmed:
         drop = Action(
             node_id=target.id,
             action="drop",
@@ -151,9 +150,9 @@ def _scheme_actions(
             payload={},
             sacrifice=f"放弃{target.title}",
         )
-        schemes.append(_result("C", "跳过当前", [drop], plan, started))
+        schemes.append(_result("B", "跳过当前", [drop], plan, started))
 
-    order = {"B": 0, "A": 1, "C": 2} if person_id else {"A": 0, "B": 1, "C": 2}
+    order = {"B": 0, "A": 1} if person_id else {"A": 0, "B": 1}
     return sorted(schemes, key=lambda item: order.get(item.scheme, 9))
 
 

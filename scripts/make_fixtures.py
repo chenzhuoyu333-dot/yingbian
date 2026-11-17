@@ -42,14 +42,14 @@ def main() -> None:
     write("plan-saturday.json", {"ok": True, "data": {"plan": plan.to_dict(), "version": 1}})
     write("event-rain-T1.json", {"ok": True, "data": propagate(plan, Event.from_dict(RAIN)).to_dict()})
 
-    schemes = freeze_timing([repair(plan, Event.from_dict(RAIN), key).to_dict() for key in ("A", "B", "C")])
+    schemes = freeze_timing([repair(plan, Event.from_dict(RAIN), key).to_dict() for key in ("A", "B")])
     write(
         "repair-T1.json",
         {"ok": True, "data": {"status": "ok", "schemes": schemes, "blockedNode": None, "message": ""}},
     )
 
     write("event-cancel-T3.json", {"ok": True, "data": propagate(plan, Event.from_dict(CANCEL)).to_dict()})
-    schemes_t3 = freeze_timing([repair(plan, Event.from_dict(CANCEL), key).to_dict() for key in ("A", "B", "C")])
+    schemes_t3 = freeze_timing([repair(plan, Event.from_dict(CANCEL), key).to_dict() for key in ("A", "B")])
     write(
         "repair-T3.json",
         {"ok": True, "data": {"status": "ok", "schemes": schemes_t3, "blockedNode": None, "message": ""}},

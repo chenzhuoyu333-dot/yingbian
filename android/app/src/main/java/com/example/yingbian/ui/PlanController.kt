@@ -12,12 +12,14 @@ import com.example.yingbian.data.GeneratePrefs
 import com.example.yingbian.data.MemberInfo
 import com.example.yingbian.data.Plan
 import com.example.yingbian.data.PlanRepository
+import com.example.yingbian.data.PlanSummary
 import com.example.yingbian.data.RepairAction
 import com.example.yingbian.data.RepairScheme
 import com.example.yingbian.data.VoteState
 import com.example.yingbian.data.Weather
 
 enum class AppScreen(val label: String) {
+    Home("计划"),
     Plan("行程"),
     Scheme("方案"),
     Notify("通知"),
@@ -67,7 +69,7 @@ class PlanController(
         private set
     var offline by mutableStateOf(false)
         private set
-    var screen by mutableStateOf(AppScreen.Plan)
+    var screen by mutableStateOf(AppScreen.Home)
         private set
     var showImpact by mutableStateOf(false)
         private set
@@ -173,6 +175,82 @@ class PlanController(
 
     fun clearRemoteChanged() {
         remoteChanged = false
+    }
+
+    // ── 首页：我的计划 ─────────────────────────────
+    var homePlans by mutableStateOf<List<PlanSummary>>(emptyList())
+        private set
+    var homeLoading by mutableStateOf(false)
+        private set
+
+    suspend fun loadHome() {
+        homeLoading = true
+        try {
+            homePlans = repo.plans()
+        } catch (exception: Exception) {
+            // 首页拉不到不要紧，用户还能用内置计划
+            homePlans = emptyList()
+        } finally {
+            homeLoading = false
+        }
+    }
+
+    /**
+     * 一句话新建行程：把文字交给后端，AI 解析成偏好，再用高德真实地点排成计划。
+     * 成功后直接进这份新行程的行程页。
+     */
+    suspend fun createFromText(text: String) {
+        loading = true
+        error = null
+        generateNote = null
+        try {
+            plan = repo.generateFromText(text)
+            impact = null
+            schemes = emptyList()
+            selectedSchemeId = null
+            notifications = emptyList()
+            notificationSelection = emptySet()
+            todos = emptyList()
+            todoDone = emptySet()
+            lastScheme = null
+            planBeforeApply = null
+            showImpact = false
+            blockedMessage = null
+            blockedNode = null
+            screen = AppScreen.Plan
+            weather = runCatching { repo.weather() }.getOrNull()
+            generateNote = "已生成 ${plan?.nodes?.size ?: 0} 个节点"
+            loadHome()
+        } catch (exception: Exception) {
+            error = exception.message ?: "生成失败"
+        } finally {
+            loading = false
+        }
+    }
+
+    /** 从首页打开一份已有的行程 */
+    suspend fun openPlan(planId: String) {
+        loading = true
+        error = null
+        try {
+            plan = repo.openPlan(planId)
+            impact = null
+            schemes = emptyList()
+            selectedSchemeId = null
+            notifications = emptyList()
+            todos = emptyList()
+            screen = AppScreen.Plan
+            weather = runCatching { repo.weather() }.getOrNull()
+        } catch (exception: Exception) {
+            error = exception.message ?: "打开失败"
+        } finally {
+            loading = false
+        }
+    }
+
+    suspend fun removePlan(planId: String) {
+        runCatching { repo.deletePlan(planId) }
+        loadHome()
     }
     private var planBeforeApply: Plan? = null
     private var scenario = DemoScenario.RAIN

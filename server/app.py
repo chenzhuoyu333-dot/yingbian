@@ -6,8 +6,10 @@ Run:
 
 from __future__ import annotations
 
+import json
 import os
 import socket
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,20 +42,47 @@ app.add_middleware(
 
 BASE = load_plan()
 
-# 同时加载 data/plan-*.json：标准版（零缓冲，用于说明"一延误就全崩"）
-# 和宽松版（有缓冲，用于演示"缓冲吸收延误"与三个方案分化）。
-# 计划 id 以文件里的 planId 为准，前端通过 plan_id 路径参数选择。
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+# 内置示范计划放 data/plan-*.json；用户生成/保存的计划放 data/plans/，
+# 这样"我的计划"首页在重启后仍然有历史记录，演示不会一重启就清空。
+PLAN_DIR = DATA_DIR / "plans"
+PLAN_DIR.mkdir(parents=True, exist_ok=True)
+
 PLANS: dict[str, Any] = {}
 VERSIONS: dict[str, list[Any]] = {}
-for _f in sorted((Path(__file__).resolve().parent.parent / "data").glob("plan-*.json")):
+
+
+def _register(plan: Any, source: str) -> None:
+    PLANS[plan.plan_id] = plan.clone()
+    VERSIONS[plan.plan_id] = [plan.clone()]
+    count = len([n for n in plan.nodes if not getattr(n, "dropped", False)])
+    print(f"[plan] 已加载 {plan.plan_id:<24} {source:<20} {count} 节点")
+
+
+def persist(plan: Any) -> Path:
+    """把计划写进 data/plans/，让首页的"历史记录"是真的存下来的"""
+    path = PLAN_DIR / f"{plan.plan_id}.json"
+    path.write_text(
+        json.dumps(plan.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return path
+
+
+for _f in sorted(DATA_DIR.glob("plan-*.json")):
     try:
         _p = load_plan(_f)
     except Exception as _exc:  # 单个文件坏了不影响启动
         print(f"[warn] 跳过 {_f.name}: {_exc}")
         continue
-    PLANS[_p.plan_id] = _p.clone()
-    VERSIONS[_p.plan_id] = [_p.clone()]
-    print(f"[plan] 已加载 {_p.plan_id:<24} {_f.name}  {len(_p.nodes)} 节点")
+    _register(_p, _f.name)
+
+for _f in sorted(PLAN_DIR.glob("*.json")):
+    try:
+        _p = load_plan(_f)
+    except Exception as _exc:
+        print(f"[warn] 跳过 {_f.name}: {_exc}")
+        continue
+    _register(_p, "data/plans/" + _f.name)
 
 if BASE.plan_id not in PLANS:
     PLANS[BASE.plan_id] = BASE.clone()
@@ -219,6 +248,14 @@ def post_generate(body: dict = Body(...)):
         return _error("GENERATE_FAILED", str(exc))
 
     parsed = Plan.from_dict(raw_plan)
+
+    # 每次生成给一个唯一 id：否则都叫 p_generated 会互相覆盖，
+    # 首页"我的计划"里也就只有一条。
+    stamp = datetime.now().strftime("%m%d-%H%M%S")
+    parsed.plan_id = f"p_gen_{stamp}"
+    parsed.version = 1
+    persist(parsed)
+
     PLANS[parsed.plan_id] = parsed.clone()
     VERSIONS[parsed.plan_id] = [parsed.clone()]
 
@@ -282,6 +319,55 @@ def _version_guard(plan, body: dict):
             409,
         )
     return None
+
+
+@app.get("/api/plans")
+def list_plans():
+    """
+    "我的计划"首页的数据源。按更新时间倒序，最近改过的排在最前面。
+
+    builtin=true 的是仓库内置的示范计划（用来讲"零缓冲会全崩""有缓冲能吸收"），
+    用户可以删掉自己生成的，内置的不建议删。
+    """
+    items = []
+    for plan_id, plan in PLANS.items():
+        path = PLAN_DIR / f"{plan_id}.json"
+        stored = path.exists()
+        items.append(
+            {
+                "planId": plan_id,
+                "title": plan.title,
+                "date": plan.date,
+                "nodeCount": len([n for n in plan.nodes if not getattr(n, "dropped", False)]),
+                "confirmedCount": len(plan.confirmed_nodes()),
+                "version": plan.version,
+                "updatedAt": (
+                    datetime.fromtimestamp(path.stat().st_mtime).strftime("%m-%d %H:%M")
+                    if stored
+                    else ""
+                ),
+                "builtin": not stored,
+            }
+        )
+    items.sort(key=lambda item: (item["updatedAt"], item["planId"]), reverse=True)
+    return _ok({"plans": items})
+
+
+@app.delete("/api/plans/{plan_id}")
+def delete_plan(plan_id: str):
+    if plan_id not in PLANS:
+        return _error("NOT_FOUND", "计划不存在", 404)
+    path = PLAN_DIR / f"{plan_id}.json"
+    if path.exists():
+        path.unlink()
+    PLANS.pop(plan_id, None)
+    VERSIONS.pop(plan_id, None)
+    return _ok({"deleted": plan_id, "remaining": list(PLANS)})
+
+
+@app.post("/api/plans")
+def post_plans(body: dict = Body(...)):
+    return _error("USE_GENERATE", "新建行程请用 POST /api/generate", 400)
 
 
 @app.post("/api/plan/{plan_id}/members")
@@ -423,7 +509,7 @@ def post_repair(plan_id: str, body: dict = Body(...)):
         return _error("NOT_FOUND", "计划不存在", 404)
     raw_event = body.get("event") or body
     event = Event.from_dict(raw_event)
-    schemes = body.get("schemes") or ["A", "B", "C"]
+    schemes = body.get("schemes") or ["A", "B"]
     results = [repair(plan, event, key) for key in schemes]
     blocked = next((item for item in results if item.status == "blocked"), None)
     if blocked is not None:
@@ -457,6 +543,9 @@ def post_apply(plan_id: str, body: dict = Body(...)):
     new_plan.version = len(VERSIONS[plan_id]) + 1
     PLANS[plan_id] = new_plan
     VERSIONS[plan_id].append(new_plan.clone())
+    # 用户自己生成的计划要落盘，首页的"更新时间"才准
+    if (PLAN_DIR / f"{plan_id}.json").exists():
+        persist(new_plan)
 
     member = COLLAB.member(plan_id, str(body.get("memberId") or "").strip())
     if member is not None:

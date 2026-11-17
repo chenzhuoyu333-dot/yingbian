@@ -10,6 +10,9 @@ android/.idea/
 *.keystore
 android/dist/
 
-# ������Կ�������ύ
+# 本地密钥，绝不提交
 .env
 .env.local
+
+# 用户生成的计划（首页"我的计划"的历史记录），不进版本库
+data/plans/

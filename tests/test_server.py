@@ -110,8 +110,10 @@ class ServerContractTest(unittest.TestCase):
         ).json()
         data = body["data"]
         self.assertEqual(data["status"], "late")
-        self.assertIn("A", [scheme["id"] for scheme in data["schemes"]])
-        self.assertNotIn("B", [scheme["id"] for scheme in data["schemes"]])
+        self.assertEqual(
+            [scheme["id"] for scheme in data["schemes"]],
+            ["A", "B"],
+        )
 
     def test_checkin_rejects_out_of_range_minutes(self):
         response = self.client.post(
