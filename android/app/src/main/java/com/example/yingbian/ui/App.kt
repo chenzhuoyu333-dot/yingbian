@@ -47,7 +47,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.example.yingbian.data.ApiConfig
 import com.example.yingbian.data.ApiSettings
-import com.example.yingbian.data.GeneratePrefs
 import com.example.yingbian.data.LocationHelper
 import com.example.yingbian.data.createRepository
 import kotlinx.coroutines.Dispatchers
@@ -65,7 +64,6 @@ fun YingBianRoot() {
     val locationHelper = remember { LocationHelper(context) }
     var debugOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
-    var generateOpen by remember { mutableStateOf(false) }
     var voteOpen by remember { mutableStateOf(false) }
     var newPlanOpen by remember { mutableStateOf(false) }
     var activityOpen by remember { mutableStateOf(false) }
@@ -137,8 +135,9 @@ fun YingBianRoot() {
                     }
                 },
                 actions = {
-                    TextButton(onClick = { generateOpen = true }) {
-                        Text("生成行程", fontSize = 13.sp)
+                    // 只有一个入口：新建 → 直接输入偏好，不再有结构化表单
+                    TextButton(onClick = { newPlanOpen = true }) {
+                        Text("新建", fontSize = 13.sp)
                     }
                     if ((controller.plan?.version ?: 1) > 1) {
                         TextButton(onClick = { scope.launch { controller.undo() } }) {
@@ -331,28 +330,6 @@ fun YingBianRoot() {
             rows = controller.activityRows,
             members = controller.members,
             onDismiss = { activityOpen = false },
-        )
-    }
-
-    if (generateOpen) {
-        GenerateDialog(
-            initial = remember { GeneratePrefs() },
-            busy = controller.loading,
-            error = controller.error,
-            onGenerate = { prefs ->
-                scope.launch {
-                    controller.generate(prefs)
-                    if (controller.error == null) {
-                        generateOpen = false
-                        val note = controller.generateNote
-                        if (!note.isNullOrBlank()) {
-                            Toast.makeText(context, note, Toast.LENGTH_SHORT).show()
-                        }
-                        controller.clearGenerateNote()
-                    }
-                }
-            },
-            onDismiss = { generateOpen = false },
         )
     }
 
