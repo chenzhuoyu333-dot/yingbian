@@ -24,6 +24,16 @@ interface PlanRepository {
     suspend fun weather(lat: Double? = null, lng: Double? = null): Weather
     fun cachedPlan(): Plan?
 
+    // ── 首页：我的计划 ────────────────────────────
+    /** 历史行程列表（最近改过的排前面） */
+    suspend fun plans(): List<PlanSummary>
+    /** 一句话新建：交给后端 AI 解析偏好再排行程 */
+    suspend fun generateFromText(text: String): Plan
+    /** 切换到某份已有行程 */
+    suspend fun openPlan(planId: String): Plan
+    /** 删除自己生成的行程 */
+    suspend fun deletePlan(planId: String)
+
     // ── 多人协作 ──────────────────────────────────
     /** 加入行程（幂等），返回当前成员列表 */
     suspend fun join(): List<MemberInfo>
@@ -138,6 +148,30 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
         throw IOException("离线模式不支持多人协作，请连上后端")
 
     override suspend fun activity(): List<ActivityRow> = emptyList()
+
+    // 离线只有内置那一份示例计划，"我的计划"里就一条
+    override suspend fun plans(): List<PlanSummary> {
+        val loaded = loadPlan()
+        return listOf(
+            PlanSummary(
+                planId = loaded.planId,
+                title = loaded.title,
+                date = loaded.date,
+                nodeCount = loaded.nodes.size,
+                confirmedCount = loaded.nodes.count { it.confirmed },
+                version = loaded.version,
+                updatedAt = "",
+                builtin = true,
+            )
+        )
+    }
+
+    override suspend fun generateFromText(text: String): Plan =
+        throw IOException("离线模式无法按文字生成，请连上后端")
+
+    override suspend fun openPlan(planId: String): Plan = loadPlan()
+
+    override suspend fun deletePlan(planId: String) = Unit
 
     override suspend fun reset(): Plan {
         history.clear()
@@ -340,6 +374,34 @@ class RemotePlanRepository(
 
     override suspend fun activity(): List<ActivityRow> =
         PlanJson.parseActivity(request("GET", "/api/plan/$planId/activity"))
+
+    // ── 首页：我的计划 ────────────────────────────
+    override suspend fun plans(): List<PlanSummary> =
+        PlanJson.parsePlans(request("GET", "/api/plans"))
+
+    override suspend fun generateFromText(text: String): Plan {
+        val body = JSONObject().put("text", text)
+        val data = request("POST", "/api/generate", body)
+        val raw = data.getJSONObject("plan")
+        // 每次生成是一个新计划，切到它，后面的下雨/方案都作用在它身上
+        this.planId = raw.optString("planId", this.planId).ifBlank { this.planId }
+        planVersion = raw.optInt("version", 1)
+        savePlan(raw)
+        return PlanJson.parsePlan(raw)
+    }
+
+    override suspend fun openPlan(planId: String): Plan {
+        this.planId = planId
+        return loadPlan()
+    }
+
+    override suspend fun deletePlan(planId: String) {
+        request("DELETE", "/api/plans/$planId")
+        // 删掉的正好是当前这份，就退回默认计划
+        if (planId == this.planId) {
+            this.planId = "p_sat_guzhen"
+        }
+    }
 
     override suspend fun reset(): Plan = loadPlan()
 

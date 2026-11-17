@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Settings
@@ -66,6 +67,7 @@ fun YingBianRoot() {
     var settingsOpen by remember { mutableStateOf(false) }
     var generateOpen by remember { mutableStateOf(false) }
     var voteOpen by remember { mutableStateOf(false) }
+    var newPlanOpen by remember { mutableStateOf(false) }
     var activityOpen by remember { mutableStateOf(false) }
 
     suspend fun refreshWeatherFromLocation() {
@@ -101,6 +103,7 @@ fun YingBianRoot() {
     }
 
     LaunchedEffect(repoVersion) {
+        controller.loadHome()
         controller.load()
         controller.joinTrip()
         controller.pollLoop()
@@ -117,6 +120,7 @@ fun YingBianRoot() {
                     Column {
                         Text(
                             text = when (controller.screen) {
+                                AppScreen.Home -> "我的计划"
                                 AppScreen.Plan -> controller.plan?.title ?: "应变"
                                 AppScreen.Scheme -> "三方案对比"
                                 AppScreen.Notify -> "通知预览"
@@ -173,10 +177,21 @@ fun YingBianRoot() {
                         onCache = { controller.useCache() },
                     )
 
+                    controller.screen == AppScreen.Home -> HomeScreen(
+                        plans = controller.homePlans,
+                        loading = controller.homeLoading,
+                        onOpen = { id -> scope.launch { controller.openPlan(id) } },
+                        onCreate = { newPlanOpen = true },
+                        onDelete = { id -> scope.launch { controller.removePlan(id) } },
+                    )
+
                     controller.plan == null -> LoadingScreen()
                     else -> {
                         val plan = controller.plan!!
                         when (controller.screen) {
+                            // 首页在上面的分支已经处理掉了；这里兜底防止万一
+                            AppScreen.Home -> LoadingScreen()
+
                             AppScreen.Plan -> PlanScreen(
                                 plan = plan,
                                 impact = controller.impact,
@@ -251,6 +266,24 @@ fun YingBianRoot() {
             message = message,
             onUnlock = { scope.launch { controller.unlockAndRepair() } },
             onKeep = { controller.dismissBlocked() },
+        )
+    }
+
+    if (newPlanOpen) {
+        NewPlanDialog(
+            busy = controller.loading,
+            error = controller.error,
+            onGenerate = { text ->
+                scope.launch {
+                    controller.createFromText(text)
+                    if (controller.error == null) {
+                        newPlanOpen = false
+                        controller.generateNote?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
+                        controller.clearGenerateNote()
+                    }
+                }
+            },
+            onDismiss = { newPlanOpen = false },
         )
     }
 
@@ -351,6 +384,7 @@ fun YingBianRoot() {
 }
 
 private fun screenIcon(screen: AppScreen): ImageVector = when (screen) {
+    AppScreen.Home -> Icons.Default.Menu
     AppScreen.Plan -> Icons.Default.Home
     AppScreen.Scheme -> Icons.Default.List
     AppScreen.Notify -> Icons.Default.Notifications

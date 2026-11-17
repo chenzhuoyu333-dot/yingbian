@@ -97,9 +97,20 @@ data class RepairResult(
 )
 
 /**
- * 生成行程的偏好。字段名与后端 /api/generate 的请求体一一对应。
- * 全部有默认值，界面上只需要改用户关心的几项。
+ * 首页"我的计划"里的一张卡片。对应 GET /api/plans 的返回。
  */
+data class PlanSummary(
+    val planId: String,
+    val title: String,
+    val date: String,
+    val nodeCount: Int,
+    val confirmedCount: Int,
+    val version: Int,
+    val updatedAt: String,
+    /** 仓库内置的示范计划：用来讲"零缓冲会全崩"，不建议删 */
+    val builtin: Boolean,
+)
+
 /**
  * 多人协作：成员。
  */
@@ -133,6 +144,10 @@ data class ActivityRow(
     val text: String,
 )
 
+/**
+ * 生成行程的偏好。字段名与后端 /api/generate 的请求体一一对应。
+ * 全部有默认值，界面上只需要改用户关心的几项。
+ */
 data class GeneratePrefs(
     val city: String = "杭州",
     val date: String = "2026-11-14",
@@ -395,6 +410,20 @@ object PlanJson {
             defaultScheme = raw.optString("defaultScheme", "B"),
         )
     }
+
+    fun parsePlans(data: JSONObject): List<PlanSummary> =
+        data.optJSONArray("plans")?.objects().orEmpty().map { item ->
+            PlanSummary(
+                planId = item.text("planId"),
+                title = item.text("title"),
+                date = item.text("date"),
+                nodeCount = item.optInt("nodeCount", 0),
+                confirmedCount = item.optInt("confirmedCount", 0),
+                version = item.optInt("version", 1),
+                updatedAt = item.text("updatedAt"),
+                builtin = item.optBoolean("builtin", false),
+            )
+        }
 
     fun parseMembers(data: JSONObject): List<MemberInfo> =
         data.optJSONArray("members")?.objects().orEmpty().map { item ->
