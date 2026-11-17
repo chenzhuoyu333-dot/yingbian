@@ -242,6 +242,7 @@ def post_generate(body: dict = Body(...)):
             start_place=str(body.get("startPlace") or ""),
             budget_per_person=int(body.get("budgetPerPerson") or 0),
             prefer_high_rating=bool(body.get("preferHighRating") or False),
+            days=int(body.get("days") or 1),
         )
         raw_plan = generate(prefs)
     except Exception as exc:  # 没配 Key / 搜不到地点 / 网络失败，都给出可读原因

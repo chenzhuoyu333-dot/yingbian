@@ -72,6 +72,8 @@ class Preferences:
     pace: str = "normal"
     max_transit_min: int = 45
     start_place: str = ""
+    # 行程天数：1 = 当天往返，>1 会按天切开并补住宿节点
+    days: int = 1
     # 由 AI 从"人均 100 以内""想去评价好的"这类话里解析出来
     budget_per_person: int = 0      # 0 表示不限
     prefer_high_rating: bool = False
@@ -396,74 +398,134 @@ def generate(prefs: Preferences) -> dict:
         **{**prefs.__dict__, "start_time": format_time(meeting_min + MEETING_MINUTES)}
     )
 
-    # ③ 排序：必去优先，其余按最近邻
-    ordered: list[tuple[Poi, int, int]] = []
+    # ③ 按天排：每天独立一条链，用完的点不再重复排
+    days = max(1, min(7, int(prefs.days or 1)))
+    meeting_min = parse_time(prefs.start_time)
+    day_start = meeting_min + MEETING_MINUTES
+    day_end = parse_time(prefs.end_time)
+
     pool = list(candidates)
     for poi in must_pois:
         if poi in pool:
             pool.remove(poi)
 
-    # 必去点不受 max_transit_min 限制（用户说"必去"就不能因为远而悄悄丢掉），
-    # 只受结束时间约束；实在来不及就记警告，让调用方知道。
-    if must_pois:
-        must_prefs = Preferences(**{**pick_prefs.__dict__, "max_transit_min": 24 * 60})
-        must_ordered = _ordered_pick(origin, must_pois, must_prefs)
-        placed = {p.name for p, _, _, _ in must_ordered}
-        for poi in must_pois:
-            if poi.name not in placed:
-                warnings.append(f"必去点「{poi.name}」来不及排进当天时间窗，已跳过")
-        ordered.extend(must_ordered)
-
-    last = ordered[-1][0] if ordered else origin
-    clock_shift = ordered[-1][2] if ordered else meeting_min + MEETING_MINUTES
-    rest_prefs = Preferences(**{**pick_prefs.__dict__, "start_time": format_time(clock_shift)})
-    ordered.extend(_ordered_pick(last, pool, rest_prefs))
-
-    # ④ 组装节点：起点 + 各站
-    nodes: list[dict] = [
-        {
-            "id": "n_meet",
-            "type": "place",
-            "title": origin.name or f"{prefs.city}集合",
-            "start": format_time(meeting_min),
-            "end": format_time(meeting_min + MEETING_MINUTES),
-            "indoor": True,
-            "confirmed": True,
-            "windowLatest": None,
-            "alternatives": [],
-            "source": {"kind": "manual", "note": "生成器自动设定的集合点", "at": prefs.date},
-            "confidence": "medium",
-            "place": origin.name,
-        }
-    ]
-
     locked_names = {p.name for p in must_pois}
-    for i, (poi, arrive, leave, transit) in enumerate(ordered, start=1):
-        nodes.append(_node_from_poi(poi, arrive, leave, transit, i, poi.name in locked_names, prefs))
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    used_names: set[str] = set()
+    current = origin
+    meet_title = origin.name or f"{prefs.city}集合"
+
+    for day in range(1, days + 1):
+        day_prefs = Preferences(
+            **{
+                **prefs.__dict__,
+                "start_time": format_time(day_start),
+                "end_time": format_time(day_end),
+            }
+        )
+
+        picks: list[tuple[Poi, int, int, int]] = []
+        if day == 1 and must_pois:
+            # 必去点不受通勤上限限制，只受当天时间窗约束
+            must_prefs = Preferences(**{**day_prefs.__dict__, "max_transit_min": 24 * 60})
+            must_ordered = _ordered_pick(current, must_pois, must_prefs)
+            placed = {p.name for p, _, _, _ in must_ordered}
+            for poi in must_pois:
+                if poi.name not in placed:
+                    warnings.append(f"必去点「{poi.name}」来不及排进行程，已跳过")
+            picks.extend(must_ordered)
+
+        rest = [p for p in pool if p.name not in used_names and p.name not in locked_names]
+        picks.extend(_ordered_pick(current, rest, day_prefs))
+
+        if not picks:
+            break   # 后面的天排不出东西了，就到此为止
+
+        # 每天一个集合/出发节点
+        meet_id = f"d{day}_meet"
+        nodes.append(
+            {
+                "id": meet_id,
+                "type": "place",
+                "title": meet_title if day == 1 else f"{prefs.city}出发（第 {day} 天）",
+                "start": format_time(meeting_min),
+                "end": format_time(day_start),
+                "indoor": True,
+                "confirmed": True,
+                "windowLatest": None,
+                "alternatives": [],
+                "source": {"kind": "manual", "note": "生成器设定的集合点", "at": prefs.date},
+                "confidence": "medium",
+                "place": meet_title,
+            }
+        )
+
+        prev_poi = current
+        prev_id = meet_id
+        for i, (poi, arrive, leave, transit) in enumerate(picks, start=1):
+            node = _node_from_poi(poi, arrive, leave, transit, i, poi.name in locked_names, prefs)
+            node["id"] = f"d{day}_n{i}"
+            nodes.append(node)
+            edges.append(
+                {
+                    "from": prev_id,
+                    "to": node["id"],
+                    "type": "precedes",
+                    "minGapMin": travel_minutes(prev_poi, poi),
+                }
+            )
+            prev_poi, prev_id = poi, node["id"]
+            used_names.add(poi.name)
+
+        # 除最后一天外，补一个住宿节点（第二天从酒店出发）
+        if day < days:
+            # 住宿必须排在最后一站之后：先留 15 分钟通勤，再住 40 分钟
+            last_leave = picks[-1][2]
+            hotel_start = last_leave + 15
+            hotel_end = min(hotel_start + 40, 23 * 60 + 30)
+            if hotel_end - hotel_start < 30:      # 太晚就往前压，别跨过午夜
+                hotel_end = hotel_start + 30
+            hotel_id = f"d{day}_hotel"
+            nodes.append(
+                {
+                    "id": hotel_id,
+                    "type": "place",
+                    "title": f"{prefs.city}住宿（第 {day} 晚）",
+                    "start": format_time(hotel_start),
+                    "end": format_time(hotel_end),
+                    "indoor": True,
+                    "confirmed": False,
+                    "windowLatest": None,
+                    "alternatives": [],
+                    "source": {"kind": "manual", "note": "多日行程自动补的过夜点", "at": prefs.date},
+                    "confidence": "low",
+                    "place": "",
+                }
+            )
+            # 住宿点不锁定：具体住哪要用户自己定
+            edges.append(
+                {
+                    "from": prev_id,
+                    "to": hotel_id,
+                    "type": "precedes",
+                    "minGapMin": 15,
+                }
+            )
+            current = prev_poi
 
     if len(nodes) < 3:
         raise RuntimeError("只排得出不到 3 个点，可能是时间太短或 max_transit_min 太小")
 
-    # ⑤ 连边：minGap = 估算通勤时间
-    edges = []
-    for i in range(len(nodes) - 1):
-        if i == 0:
-            from_poi, to_poi = origin, ordered[0][0]
-        else:
-            from_poi, to_poi = ordered[i - 1][0], ordered[i][0]
-        edges.append(
-            {
-                "from": nodes[i]["id"],
-                "to": nodes[i + 1]["id"],
-                "type": "precedes",
-                "minGapMin": travel_minutes(from_poi, to_poi),
-            }
-        )
-
     plan = {
         "planId": "p_generated",
-        "title": f"{prefs.date} {prefs.city}一日行程（据偏好生成）",
+        "title": (
+            f"{prefs.date} {prefs.city}一日行程（据偏好生成）"
+            if days == 1
+            else f"{prefs.date} {prefs.city} {days} 日行程（据偏好生成）"
+        ),
         "date": prefs.date,
+        "days": days,
         "nodes": nodes,
         "edges": edges,
         # 生成器自己的说明：界面可以直接展示，评委也能看到这版怎么来的、哪里不确定
@@ -474,6 +536,7 @@ def generate(prefs: Preferences) -> dict:
             # 用户点名但没排进去的必去点，界面上要标"待确认"
             "unresolvedMustVisit": list(unresolved),
             "pace": prefs.pace,
+            "days": days,
             "maxTransitMin": prefs.max_transit_min,
             "warnings": warnings,
             "note": "地点来自高德 POI 检索；停留时长为经验值，通勤为直线距离估算，均标 confidence=low，请用户确认",
@@ -485,7 +548,12 @@ def generate(prefs: Preferences) -> dict:
     if problems:
         trimmed = dict(plan)
         trimmed["nodes"] = plan["nodes"][:-2]
-        trimmed["edges"] = plan["edges"][: len(trimmed["nodes"]) - 1]
+        # 多日行程里每天是独立的链，边数不等于节点数-1；
+        # 必须按"两端节点都还在"筛边，不能按数量截断（否则会出现悬空边）
+        _keep = {n["id"] for n in trimmed["nodes"]}
+        trimmed["edges"] = [
+            e for e in plan["edges"] if e["from"] in _keep and e["to"] in _keep
+        ]
         if not _feasibility_check(Plan.from_dict(trimmed)):
             trimmed["generation"] = dict(plan["generation"])
             trimmed["generation"]["warnings"] = warnings + [

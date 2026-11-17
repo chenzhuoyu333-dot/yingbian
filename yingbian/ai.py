@@ -299,6 +299,18 @@ def _rule_preferences(text: str) -> dict:
             budget = int(found.group(1))
             break
 
+    # 天数：3天2晚 / 两天 / 4日游 / 周末
+    day_digits = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7}
+    days = None
+    found_days = re.search(r"(\d{1,2}|[一二两三四五六七])\s*[天日]", text)
+    if found_days:
+        raw_days = found_days.group(1)
+        days = int(raw_days) if raw_days.isdigit() else day_digits.get(raw_days)
+    elif "周末" in text:
+        days = 2
+    if days is not None:
+        days = max(1, min(7, days))
+
     prefer_rating = any(
         w in text for w in ("评分高", "评价好", "口碑好", "高分", "好吃的", "有名")
     ) or None
@@ -312,6 +324,7 @@ def _rule_preferences(text: str) -> dict:
         "avoid": avoid,
         "pace": pace,
         "maxTransitMin": 45,
+        "days": days,
         "budgetPerPerson": budget,
         "preferHighRating": prefer_rating,
     }
@@ -378,6 +391,7 @@ _PREF_SYSTEM = """你是行程偏好解析器。把用户的中文需求解析�
   avoid: 字符串数组，用户说"不想/别去/不去"的东西；没有就输出 []
   pace: "relaxed" | "normal" | "packed" 或 null（"轻松/不想赶"→relaxed，"多去几个"→packed）
   maxTransitMin: 整数或 null
+  days: 行程天数（整数 1~7）或 null（"3天2晚"→3，"两天"→2，"周末"→2）
   budgetPerPerson: 整数（人均预算上限，元）或 null（"人均100以内/预算200"）
   preferHighRating: true/false 或 null（"想去评价好的/评分高的/口碑好"）
 
@@ -436,6 +450,11 @@ def parse_preferences(text: str) -> tuple[dict, str]:
             merged["budgetPerPerson"] = budget if 0 < budget <= 10000 else fixed.get("budgetPerPerson")
         except (TypeError, ValueError):
             merged["budgetPerPerson"] = fixed.get("budgetPerPerson")
+
+        try:
+            merged["days"] = max(1, min(7, int(merged.get("days") or 1)))
+        except (TypeError, ValueError):
+            merged["days"] = 1
 
         merged["preferHighRating"] = bool(
             merged.get("preferHighRating") or fixed.get("preferHighRating")

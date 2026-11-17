@@ -1091,21 +1091,14 @@ fun HomeScreen(
     onDelete: (String) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("我的计划", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
-            Spacer(Modifier.weight(1f))
-            Button(onClick = onCreate) { Text("＋ 新建", fontSize = 13.sp) }
-        }
+        // 顶部已经有标题和加号了，这里不再重复一行"我的计划 + 新建"
 
         if (plans.isEmpty() && !loading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("还没有行程", fontSize = 14.sp, color = Muted)
                     Spacer(Modifier.height(6.dp))
-                    Text("点右上角「新建」，说一句你想怎么玩", fontSize = 12.sp, color = Muted)
+                    Text("点右上角＋，说一句你想怎么玩", fontSize = 12.sp, color = Muted)
                 }
             }
             return@Column

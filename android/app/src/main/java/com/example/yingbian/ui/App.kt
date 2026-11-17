@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
@@ -127,17 +128,20 @@ fun YingBianRoot() {
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                         )
-                        Text(
-                            text = controller.plan?.date ?: "行程变化助手",
-                            fontSize = 11.sp,
-                            color = Muted,
-                        )
+                        // 首页不再显示日期：日期在每张卡片上已经有了，标题下再挂一个纯属重复
+                        if (controller.screen != AppScreen.Home) {
+                            Text(
+                                text = controller.plan?.date ?: "行程变化助手",
+                                fontSize = 11.sp,
+                                color = Muted,
+                            )
+                        }
                     }
                 },
                 actions = {
-                    // 只有一个入口：新建 → 直接输入偏好，不再有结构化表单
-                    TextButton(onClick = { newPlanOpen = true }) {
-                        Text("新建", fontSize = 13.sp)
+                    // 只有一个入口：加号 → 输入一句话生成行程
+                    IconButton(onClick = { newPlanOpen = true }) {
+                        Icon(Icons.Default.Add, contentDescription = "新建行程")
                     }
                     if ((controller.plan?.version ?: 1) > 1) {
                         TextButton(onClick = { scope.launch { controller.undo() } }) {
