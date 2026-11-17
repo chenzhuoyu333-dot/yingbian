@@ -252,6 +252,8 @@ fun applyActions(plan: Plan, actions: List<RepairAction>): Plan {
 }
 
 object PlanJson {
+    private const val SAME_RESULT_LABEL = "两种偏好结果一致"
+
     private fun JSONObject.text(key: String): String = if (isNull(key)) "" else optString(key, "")
 
     private fun JSONObject.stringMap(): Map<String, String> {
@@ -351,7 +353,7 @@ object PlanJson {
     fun parseRepair(data: JSONObject): RepairResult {
         val schemes = data.optJSONArray("schemes")?.objects().orEmpty().map { item ->
             parseScheme(item)
-        }
+        }.let(::dedupeSchemes)
         return RepairResult(
             status = data.text("status").ifBlank { "ok" },
             schemes = schemes,
@@ -377,6 +379,31 @@ object PlanJson {
         sacrifice = item.text("sacrifice"),
     )
 
+    private fun schemeSignature(scheme: RepairScheme): String =
+        scheme.actions.joinToString("|") { action ->
+            val payload = action.payload.toSortedMap().entries.joinToString(",") { (key, value) ->
+                "$key=$value"
+            }
+            "${action.nodeId}:${action.action}:$payload"
+        }
+
+    private fun dedupeSchemes(schemes: List<RepairScheme>): List<RepairScheme> {
+        if (schemes.size < 2) return schemes
+        val unique = mutableListOf<RepairScheme>()
+        val seen = mutableMapOf<String, Int>()
+        schemes.forEach { scheme ->
+            val signature = schemeSignature(scheme)
+            val index = seen[signature]
+            if (index == null) {
+                seen[signature] = unique.size
+                unique += scheme
+            } else {
+                unique[index] = unique[index].copy(label = SAME_RESULT_LABEL)
+            }
+        }
+        return unique
+    }
+
     fun parseCheckin(data: JSONObject): CheckinResult = CheckinResult(
         nodeId = data.text("nodeId"),
         nodeTitle = data.text("nodeTitle"),
@@ -384,7 +411,9 @@ object PlanJson {
         minutes = data.optInt("minutes", 0),
         message = data.text("message"),
         impact = data.optJSONObject("impact")?.let { parseImpact(it) },
-        schemes = data.optJSONArray("schemes")?.objects().orEmpty().map { parseScheme(it) },
+        schemes = data.optJSONArray("schemes")?.objects().orEmpty()
+            .map { parseScheme(it) }
+            .let(::dedupeSchemes),
         blockedNode = data.text("blockedNode").ifBlank { null },
     )
 

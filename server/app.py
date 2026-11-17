@@ -28,7 +28,7 @@ from yingbian.collab import SCHEMES, STATE as COLLAB
 from yingbian.generate import Preferences, generate
 from yingbian.location import checkin as location_checkin
 from yingbian.models import Plan, PlanError
-from yingbian.repair import apply_actions
+from yingbian.repair import RepairResult, apply_actions
 from yingbian.weather import fetch_weather
 
 
@@ -502,6 +502,42 @@ def _describe_event(body: dict) -> str:
     return kind or "未知变化"
 
 
+def _repair_signature(result: RepairResult) -> tuple:
+    """用最终计划判断两套方案是否真的相同，而不是只比方案名字。"""
+    return (
+        result.status,
+        tuple(
+            (node.id, node.title, node.start, node.end, node.dropped, node.place, node.indoor)
+            for node in result.plan.nodes
+        ),
+    )
+
+
+def _dedupe_repairs(results: list[RepairResult]) -> list[RepairResult]:
+    if len(results) < 2:
+        return results
+    unique: list[RepairResult] = []
+    seen: dict[tuple, RepairResult] = {}
+    for result in results:
+        signature = _repair_signature(result)
+        first = seen.get(signature)
+        if first is None:
+            seen[signature] = result
+            unique.append(result)
+        else:
+            first.label = "两种偏好结果一致"
+    return unique
+
+
+def _select_repairs(results: list[RepairResult]) -> tuple[list[RepairResult], RepairResult | None]:
+    """只把 blocked 当成阻断；如果还有可用方案，就不要把它一起藏掉。"""
+    usable = [item for item in results if item.status != "blocked"]
+    if usable:
+        return _dedupe_repairs(usable), None
+    blocked = next((item for item in results if item.status == "blocked"), None)
+    return [], blocked
+
+
 @app.post("/api/plan/{plan_id}/repair")
 def post_repair(plan_id: str, body: dict = Body(...)):
     plan = _plan_or_404(plan_id)
@@ -511,8 +547,8 @@ def post_repair(plan_id: str, body: dict = Body(...)):
     event = Event.from_dict(raw_event)
     schemes = body.get("schemes") or ["A", "B"]
     results = [repair(plan, event, key) for key in schemes]
-    blocked = next((item for item in results if item.status == "blocked"), None)
-    if blocked is not None:
+    usable, blocked = _select_repairs(results)
+    if not usable and blocked is not None:
         return _ok({
             "status": "blocked",
             "schemes": [],
@@ -521,7 +557,7 @@ def post_repair(plan_id: str, body: dict = Body(...)):
         })
     return _ok({
         "status": "ok",
-        "schemes": [item.to_dict() for item in results],
+        "schemes": [item.to_dict() for item in usable],
         "blockedNode": None,
         "message": "",
     })
