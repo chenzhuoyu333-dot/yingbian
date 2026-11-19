@@ -31,6 +31,8 @@ data class PlanNode(
     val sacrifice: String,
     /** 多日行程里这个节点属于哪一天（YYYY-MM-DD）；旧计划为空 */
     val date: String = "",
+    /** 住宿占位：只表示过夜，不表示停留时长 */
+    val overnight: Boolean = false,
 ) {
     val durationMin: Int
         get() = (parseMinutes(end) - parseMinutes(start)).coerceAtLeast(0)
@@ -49,6 +51,10 @@ data class PlanTransport(
     val label: String,
     val distanceM: Int,
     val durationMin: Int,
+    /** 这段路里要步行的距离（公交方案尤其重要）；0 表示没有或未知 */
+    val walkM: Int,
+    /** 为什么选这种交通方式（公交优先/步行更快/少走路等） */
+    val chosenBy: String,
     val source: String,
     val text: String,
 ) {
@@ -355,6 +361,7 @@ object PlanJson {
                 }.orEmpty(),
                 sacrifice = item.text("sacrifice"),
                 date = item.text("date"),
+                overnight = item.optBoolean("overnight", false),
             )
         }
         val edges = raw.optJSONArray("edges")?.objects().orEmpty().map { item ->
@@ -364,6 +371,8 @@ object PlanJson {
                     label = t.text("label"),
                     distanceM = t.optInt("distanceM", 0),
                     durationMin = t.optInt("durationMin", 0),
+                    walkM = t.optInt("walkM", 0),
+                    chosenBy = t.text("chosenBy"),
                     source = t.text("source").ifBlank { "estimate" },
                     text = t.text("text"),
                 )

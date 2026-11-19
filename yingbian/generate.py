@@ -28,6 +28,7 @@ from .models import Plan, format_time, parse_time
 from .poi import (
     DEFAULT_INTERESTS,
     Poi,
+    choose_route,
     find_by_name,
     route_plan,
     search_interests,
@@ -79,6 +80,10 @@ class Preferences:
     # 由 AI 从"人均 100 以内""想去评价好的"这类话里解析出来
     budget_per_person: int = 0      # 0 表示不限
     prefer_high_rating: bool = False
+    # 住宿：用户指定的酒店名或区域；空表示待定
+    lodging: str = ""
+    # "不想多走路"：不做长距离步行，公交挑步行最少的方案
+    avoid_walking: bool = False
 
 
 def _blocked(poi: Poi, avoid: list[str]) -> bool:
@@ -456,6 +461,22 @@ def generate(prefs: Preferences) -> dict:
     origin = _pick_origin(prefs, must_pois + candidates)
     warnings: list[str] = []
 
+    # ③ 住宿：用户给了酒店/区域就把它当地理锚点，第二天从酒店出发，
+    #    晚上回酒店，酒店通勤按真实路径算。没给就还是过夜占位，不编时间。
+    lodging_poi: Poi | None = None
+    if prefs.lodging.strip() and int(prefs.days or 1) > 1:
+        lodging_poi = find_by_name(prefs.city, prefs.lodging.strip())
+        if lodging_poi is None:
+            warnings.append(
+                f"住宿「{prefs.lodging.strip()}」没搜到，已按待定处理；"
+                "可以换成具体酒店名或附近的地标"
+            )
+    if int(prefs.days or 1) > 1 and lodging_poi is None and not prefs.lodging.strip():
+        warnings.append(
+            "住宿未指定：只放了过夜占位，入住时间和酒店通勤未计入行程；"
+            "在新建行程里填「住哪儿」可以按酒店排"
+        )
+
     # 未解析的必去点必须显式告知：用户说了"必去"，结果没排进去，
     # 静默丢掉会让用户以为计划里已经有它了。
     for name in unresolved:
@@ -498,15 +519,21 @@ def generate(prefs: Preferences) -> dict:
             }
         )
 
+        # 第 2 天起从昨晚的酒店出发；没填酒店就沿用上一站
+        day_origin = current if day == 1 else (lodging_poi or current)
+
         picks: list[tuple[Poi, int, int, int]] = []
         if day == 1 and must_pois:
             # 必去点不受通勤上限限制，只受当天时间窗约束
             must_prefs = Preferences(**{**day_prefs.__dict__, "max_transit_min": 24 * 60})
-            must_ordered = _ordered_pick(current, must_pois, must_prefs)
+            must_ordered = _ordered_pick(day_origin, must_pois, must_prefs)
             picks.extend(must_ordered)
 
         rest = [p for p in pool if p.name not in used_names and p.name not in locked_names]
-        picks.extend(_ordered_pick(current, rest, day_prefs))
+        picks.extend(_ordered_pick(day_origin, rest, day_prefs))
+
+        if day > 1:
+            current = day_origin
 
         if not picks:
             break   # 后面的天排不出东西了，就到此为止
@@ -515,10 +542,10 @@ def generate(prefs: Preferences) -> dict:
         # 这里把每段真实/回退后的通勤时间代入，避免“计划里写 20 分钟、地图要 35 分钟”。
         day_stops: list[tuple[Poi, int, int, dict]] = []
         clock = day_start
-        prev_poi = current
+        prev_poi = day_origin
         placed_must: set[str] = set()
         for poi, old_arrive, old_leave, _old_transit in picks:
-            route = route_plan(prev_poi, poi, prefs.city)
+            route = choose_route(prev_poi, poi, prefs.city, avoid_walking=prefs.avoid_walking)
             stay = max(20, old_leave - old_arrive)
             arrive = clock + int(route.get("durationMin") or travel_minutes(prev_poi, poi))
 
@@ -547,20 +574,32 @@ def generate(prefs: Preferences) -> dict:
 
         # 每天一个集合/出发节点
         meet_id = f"d{day}_meet"
+        if day == 1:
+            meet_label = meet_title
+            meet_place = origin.name
+            meet_note = "生成器设定的集合点"
+        elif lodging_poi is not None:
+            meet_label = f"{lodging_poi.name}出发（第 {day} 天）"
+            meet_place = lodging_poi.name
+            meet_note = "从昨晚的住宿出发"
+        else:
+            meet_label = f"{prefs.city}出发（第 {day} 天）"
+            meet_place = ""
+            meet_note = "住宿待定，沿用上一站作为出发点"
         nodes.append(
             {
                 "id": meet_id,
                 "type": "place",
-                "title": meet_title if day == 1 else f"{prefs.city}出发（第 {day} 天）",
+                "title": meet_label,
                 "start": format_time(meeting_min),
                 "end": format_time(day_start),
                 "indoor": True,
                 "confirmed": True,
                 "windowLatest": None,
                 "alternatives": [],
-                "source": {"kind": "manual", "note": "生成器设定的集合点", "at": day_date},
+                "source": {"kind": "manual", "note": meet_note, "at": day_date},
                 "confidence": "medium",
-                "place": meet_title,
+                "place": meet_place,
                 "date": day_date,
             }
         )
@@ -594,49 +633,78 @@ def generate(prefs: Preferences) -> dict:
 
         # 除最后一天外，补一个住宿节点（第二天从酒店出发）
         if day < days:
-            # 住宿必须排在最后一站之后：先留 15 分钟通勤，再住 40 分钟
             last_leave = day_stops[-1][2]
-            hotel_start = last_leave + 15
-            hotel_end = min(hotel_start + 40, 23 * 60 + 30)
-            if hotel_end - hotel_start < 30:      # 太晚就往前压，别跨过午夜
-                hotel_end = hotel_start + 30
             hotel_id = f"d{day}_hotel"
+
+            if lodging_poi is not None:
+                # 住哪儿是确定的：到店时间 = 最后一站离开 + 真实路径时长
+                hotel_route = choose_route(
+                    prev_poi,
+                    lodging_poi,
+                    prefs.city,
+                    avoid_walking=prefs.avoid_walking,
+                )
+                hotel_start = last_leave + int(hotel_route.get("durationMin") or 0)
+                hotel_end = 23 * 60 + 59
+                if hotel_start >= hotel_end:
+                    hotel_start = hotel_end - 1
+                hotel_title = f"{lodging_poi.name} · 住宿（第 {day} 晚）"
+                hotel_place = lodging_poi.name
+                hotel_note = "用户指定的住宿，已作为第二天的出发点"
+                hotel_confidence = lodging_poi.data_quality()
+                hotel_poi_info = {
+                    "name": lodging_poi.name,
+                    "address": lodging_poi.address,
+                    "rating": lodging_poi.rating or None,
+                    "cost": lodging_poi.cost or None,
+                }
+            else:
+                # 没指定住宿：只放一个过夜占位，绝不编入住时长和酒店通勤
+                hotel_start = last_leave
+                hotel_end = min(hotel_start + 1, 23 * 60 + 59)
+                hotel_route = {
+                    "mode": "placeholder",
+                    "label": "住宿待定",
+                    "distanceM": 0,
+                    "durationMin": 0,
+                    "source": "placeholder",
+                    "text": "酒店待定，通勤时间未估算",
+                }
+                hotel_title = f"{prefs.city}住宿 · 过夜（第 {day} 晚，酒店待定）"
+                hotel_place = ""
+                hotel_note = "多日行程自动补的过夜占位"
+                hotel_confidence = "low"
+                hotel_poi_info = None
+
             nodes.append(
                 {
                     "id": hotel_id,
                     "type": "place",
-                    "title": f"{prefs.city}住宿（第 {day} 晚）",
+                    "title": hotel_title,
                     "start": format_time(hotel_start),
                     "end": format_time(hotel_end),
                     "indoor": True,
                     "confirmed": False,
                     "windowLatest": None,
                     "alternatives": [],
-                    "source": {"kind": "manual", "note": "多日行程自动补的过夜点", "at": day_date},
-                    "confidence": "low",
-                    "place": "",
+                    "source": {"kind": "manual", "note": hotel_note, "at": day_date},
+                    "confidence": hotel_confidence,
+                    "place": hotel_place,
                     "date": day_date,
+                    "overnight": True,
+                    "poi": hotel_poi_info,
                 }
             )
-            # 住宿点不锁定：具体住哪要用户自己定
-            hotel_route = {
-                "mode": "transit",
-                "label": "前往住宿（待定）",
-                "distanceM": 0,
-                "durationMin": 15,
-                "source": "estimate",
-                "text": "前往住宿（待定） · 约 15 分钟估算",
-            }
             edges.append(
                 {
                     "from": prev_id,
                     "to": hotel_id,
                     "type": "precedes",
-                    "minGapMin": 15,
+                    "minGapMin": int(hotel_route.get("durationMin") or 0),
                     "transport": hotel_route,
                 }
             )
-            current = prev_poi
+            current = lodging_poi or prev_poi
 
     if len(nodes) < 3:
         raise RuntimeError("只排得出不到 3 个点，可能是时间太短或 max_transit_min 太小")
@@ -676,6 +744,17 @@ def generate(prefs: Preferences) -> dict:
             "endDate": end_date,
             "dayDates": actual_dates,
             "maxTransitMin": prefs.max_transit_min,
+            "avoidWalking": prefs.avoid_walking,
+            "lodging": (
+                {
+                    "requested": prefs.lodging,
+                    "resolved": lodging_poi is not None,
+                    "name": lodging_poi.name if lodging_poi is not None else "",
+                    "place": lodging_poi.address if lodging_poi is not None else "",
+                }
+                if prefs.lodging.strip()
+                else None
+            ),
             # 给界面用的一句话：让用户看到"AI 到底理解成什么"
             "humanSummary": " · ".join(
                 part
@@ -686,12 +765,14 @@ def generate(prefs: Preferences) -> dict:
                     ("想" + "、".join(prefs.interests)) if prefs.interests else "",
                     ("避开" + "、".join(prefs.avoid)) if prefs.avoid else "",
                     (f"人均 {prefs.budget_per_person} 以内" if prefs.budget_per_person else ""),
+                    (f"住{lodging_poi.name}" if lodging_poi is not None else ""),
+                    ("少走路" if prefs.avoid_walking else ""),
                 )
                 if part
             ),
             "warnings": warnings,
             "transportSources": {"amap": transport_amap, "estimate": transport_estimate},
-            "note": "地点来自高德 POI 检索；通勤优先使用高德路径规划，接口不可用时才退回估算并用 transport.source 标注；停留时长仍是经验值，请用户确认",
+            "note": "地点来自高德 POI 检索；交通方式按“公交优先 + 步行/骑行明显更快才换 + 少走路约束”选择，时长来自高德路径规划，接口不可用时才退回估算并用 transport.source 标注；停留时长仍是经验值，请用户确认",
         },
     }
 

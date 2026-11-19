@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -1283,90 +1284,161 @@ fun HomeScreen(
  * 这里刻意不做表单 —— 表单是"问用户要参数"，对话框是"听用户说需求"。
  * 解析成什么条件由后端 ai.py 决定，界面只负责把话送出去。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NewPlanDialog(
     busy: Boolean,
     error: String?,
-    onGenerate: (String, String, Int?) -> Unit,
+    onGenerate: (String, String, Int?, String, Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // 0 = 说需求，1 = 选日期。两页共用一个底部弹层，避免弹窗叠弹窗。
+    var page by remember { mutableStateOf(0) }
     var text by remember { mutableStateOf("") }
     var startDate by remember { mutableStateOf(todayIso()) }
-    // 0 = 按文字里说的天数；用户点 1~5 天时以用户点选为准
-    var selectedDays by remember { mutableStateOf(0) }
-    val endDate = if (selectedDays > 0) isoAfterDays(startDate, selectedDays) else null
-    val validStart = isoAfterDays(startDate, 1) != null
+    var endDate by remember { mutableStateOf<String?>(null) }
+    var lodging by remember { mutableStateOf("") }
+    var avoidWalking by remember { mutableStateOf(false) }
+    // 灵活天数 = 只固定出发日，天数交给文字里的描述
+    var flexible by remember { mutableStateOf(true) }
+    val today = remember { todayIso() }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val samples = listOf(
         "想拍照、不想早起，别爬山，轻松一点",
         "下午两点半出发，想看博物馆和咖啡店，人均 40 以内",
         "一整天都在外面，尽量多去几个地方",
     )
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("说说你想怎么玩") },
-        text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+    val tripEnd = endDate
+    val tripDays = tripEnd?.let { daysBetween(startDate, it) }
+    val dateLabel = when {
+        tripEnd != null -> "${displayMonthDay(startDate)} → ${displayMonthDay(tripEnd)}"
+        flexible -> "${displayMonthDay(startDate)} 出发"
+        else -> "${displayMonthDay(startDate)} 当天往返"
+    }
+    val dateHint = when {
+        tripEnd != null -> "共 $tripDays 天"
+        flexible -> "天数按文字里说的算"
+        else -> "共 1 天"
+    }
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        if (page == 1) {
+            DateRangeCalendar(
+                startIso = startDate,
+                endIso = endDate,
+                flexible = flexible,
+                todayIso = today,
+                onFlexibleChange = { on ->
+                    flexible = on
+                    if (on) endDate = null
+                },
+                onSelect = { newStart, newEnd ->
+                    startDate = newStart
+                    endDate = newEnd
+                    if (newEnd != null) flexible = false
+                },
+                onBack = { page = 0 },
+                onConfirm = { page = 0 },
+            )
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .imePadding()
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 28.dp),
+            ) {
+                Text("说说你想怎么玩", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Ink)
                 Text(
                     text = "AI 会把这句话解析成条件，再从高德检索真实地点排成行程。地点不是模型编的。",
                     fontSize = 11.sp,
                     color = Muted,
+                    modifier = Modifier.padding(top = 4.dp),
                 )
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(14.dp))
 
                 Surface(
+                    onClick = { page = 1 },
                     color = SoftBlue,
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text("日期", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Ink)
-                        Spacer(Modifier.height(6.dp))
-                        OutlinedTextField(
-                            value = startDate,
-                            onValueChange = { startDate = it },
-                            label = { Text("开始日期（YYYY-MM-DD）") },
-                            singleLine = true,
-                            isError = !validStart,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text("玩几天", fontSize = 11.sp, color = Muted)
-                        Spacer(Modifier.height(4.dp))
-                        listOf(
-                            listOf(0 to "按文字", 1 to "1 天", 2 to "2 天"),
-                            listOf(3 to "3 天", 4 to "4 天", 5 to "5 天"),
-                        ).forEach { options ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                options.forEach { (days, label) ->
-                                    val picked = selectedDays == days
-                                    OutlinedButton(
-                                        onClick = { selectedDays = days },
-                                        modifier = Modifier.weight(1f),
-                                    ) {
-                                        Text(
-                                            text = label,
-                                            fontSize = 11.sp,
-                                            fontWeight = if (picked) FontWeight.Bold else FontWeight.Normal,
-                                            color = if (picked) Ink else Muted,
-                                        )
-                                    }
-                                }
-                            }
-                            Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("日期", fontSize = 10.sp, color = Muted)
+                            Text(
+                                text = dateLabel,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Ink,
+                                modifier = Modifier.padding(top = 3.dp),
+                            )
+                            Text(
+                                text = dateHint,
+                                fontSize = 10.sp,
+                                color = Muted,
+                                modifier = Modifier.padding(top = 3.dp),
+                            )
+                        }
+                        Text("选择 ›", fontSize = 11.sp, color = Muted)
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = lodging,
+                    onValueChange = { lodging = it },
+                    label = { Text("住哪儿（可选）", fontSize = 12.sp) },
+                    placeholder = { Text("酒店名或区域，如 龙翔桥 / 西湖边", fontSize = 11.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    text = "填了住宿：每天从酒店出发、晚上回酒店，酒店通勤计入行程。",
+                    fontSize = 10.sp,
+                    color = Muted,
+                    modifier = Modifier.padding(top = 4.dp, start = 2.dp),
+                )
+
+                Spacer(Modifier.height(10.dp))
+                Surface(
+                    onClick = { avoidWalking = !avoidWalking },
+                    color = if (avoidWalking) Ink else SoftBlue,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (avoidWalking) "少走路：已开启" else "少走路",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (avoidWalking) Color.White else Ink,
+                            )
+                            Text(
+                                text = "不安排长距离步行，公交优先选步行最少的方案",
+                                fontSize = 9.sp,
+                                color = if (avoidWalking) Color.White.copy(alpha = 0.8f) else Muted,
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
                         }
                         Text(
-                            text = when {
-                                !validStart -> "日期格式不对，请写成 2026-11-19"
-                                endDate != null -> "结束：${formatIsoDate(endDate)}"
-                                else -> "结束日期按文字里说的天数自动计算"
-                            },
+                            text = if (avoidWalking) "✓" else "开启",
                             fontSize = 11.sp,
-                            color = if (validStart) Muted else ConflictOrange,
+                            color = if (avoidWalking) Color.White else Muted,
                         )
                     }
                 }
-                Spacer(Modifier.height(10.dp))
+
+                Spacer(Modifier.height(12.dp))
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
@@ -1374,7 +1446,7 @@ fun NewPlanDialog(
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 3,
                 )
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(8.dp))
                 Text("试试这些：", fontSize = 11.sp, color = Muted)
                 samples.forEach { sample ->
                     TextButton(
@@ -1385,41 +1457,39 @@ fun NewPlanDialog(
                     }
                 }
                 if (!error.isNullOrBlank()) {
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(4.dp))
                     Text("生成失败：$error", fontSize = 12.sp, color = ConflictOrange)
                 }
+                Spacer(Modifier.height(6.dp))
+                Button(
+                    onClick = {
+                        val pickedEnd = endDate
+                        val days = when {
+                            pickedEnd != null -> daysBetween(startDate, pickedEnd)
+                            flexible -> null
+                            else -> 1
+                        }
+                        onGenerate(text.trim(), startDate, days, lodging.trim(), avoidWalking)
+                    },
+                    enabled = !busy && text.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth().height(46.dp),
+                    shape = RoundedCornerShape(23.dp),
+                ) {
+                    Text(if (busy) "生成中…" else "生成行程")
+                }
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("取消", fontSize = 12.sp, color = Muted)
+                }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    onGenerate(
-                        text.trim(),
-                        startDate.trim(),
-                        selectedDays.takeIf { it > 0 },
-                    )
-                },
-                enabled = !busy && text.isNotBlank() && validStart,
-            ) {
-                Text(if (busy) "生成中…" else "生成行程")
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    )
+        }
+    }
 }
 
 private fun todayIso(): String =
     SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date())
-
-private fun isoAfterDays(start: String, days: Int): String? = runCatching {
-    val parser = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).apply { isLenient = false }
-    val date = parser.parse(start.trim()) ?: return null
-    val calendar = Calendar.getInstance().apply {
-        time = date
-        add(Calendar.DAY_OF_MONTH, days - 1)
-    }
-    SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(calendar.time)
-}.getOrNull()
 
 @Composable
 private fun DebugAction(label: String, onClick: () -> Unit) {

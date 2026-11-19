@@ -116,6 +116,28 @@ class GenerateApiTest(unittest.TestCase):
         self.assertEqual(res["error"]["code"], "GENERATE_FAILED")
         self.assertIn("AMAP_KEY", res["error"]["message"])
 
+    def test_generate_accepts_lodging_and_avoid_walking(self):
+        res = self.client.post(
+            "/api/generate",
+            json={
+                "city": "杭州",
+                "days": 2,
+                "startDate": "2026-11-20",
+                "lodging": "湖边公园",
+                "avoidWalking": True,
+            },
+        ).json()
+        self.assertTrue(res["ok"], res)
+        plan = res["data"]["plan"]
+        pid = plan["planId"]
+        try:
+            hotel = next(n for n in plan["nodes"] if n["id"] == "d1_hotel")
+            self.assertIn("湖边公园", hotel["title"])
+            self.assertTrue(res["data"]["generation"]["avoidWalking"])
+            self.assertTrue(res["data"]["generation"]["lodging"]["resolved"])
+        finally:
+            self.client.delete(f"/api/plans/{pid}")
+
 
 if __name__ == "__main__":
     unittest.main()

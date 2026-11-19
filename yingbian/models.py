@@ -109,6 +109,8 @@ class Node:
     contact: str = ""
     # 多日行程里这个节点属于哪一天（YYYY-MM-DD）；旧计划没有这个字段
     date: str = ""
+    # 住宿占位：表示今晚过夜，不表示在这里停留多少分钟
+    overnight: bool = False
     persons: list[str] = field(default_factory=list)
     sacrifice: str = ""
     dropped: bool = False
@@ -144,6 +146,7 @@ class Node:
             "place": self.place,
             "contact": self.contact,
             "date": self.date,
+            "overnight": self.overnight,
             "persons": list(self.persons),
             "sacrifice": self.sacrifice,
             # 来自高德的真实店面信息（评分/人均/营业时间/电话/招牌菜）与入选理由。
@@ -174,6 +177,7 @@ class Node:
                 place=raw.get("place", ""),
                 contact=raw.get("contact", ""),
                 date=raw.get("date", ""),
+                overnight=bool(raw.get("overnight", False)),
                 persons=list(raw.get("persons", [])),
                 sacrifice=raw.get("sacrifice", ""),
                 poi=dict(raw.get("poi") or {}) or None,

@@ -42,7 +42,13 @@ interface PlanRepository {
     /** 历史行程列表（最近改过的排前面） */
     suspend fun plans(): List<PlanSummary>
     /** 一句话新建：交给后端 AI 解析偏好再排行程 */
-    suspend fun generateFromText(text: String, startDate: String? = null, days: Int? = null): Plan
+    suspend fun generateFromText(
+        text: String,
+        startDate: String? = null,
+        days: Int? = null,
+        lodging: String = "",
+        avoidWalking: Boolean = false,
+    ): Plan
     /** 切换到某份已有行程 */
     suspend fun openPlan(planId: String): Plan
     /** 删除自己生成的行程 */
@@ -306,7 +312,13 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
         )
     }
 
-    override suspend fun generateFromText(text: String, startDate: String?, days: Int?): Plan =
+    override suspend fun generateFromText(
+        text: String,
+        startDate: String?,
+        days: Int?,
+        lodging: String,
+        avoidWalking: Boolean,
+    ): Plan =
         throw IOException("离线模式无法按文字生成，请连上后端")
 
     override suspend fun openPlan(planId: String): Plan = loadPlan()
@@ -538,12 +550,20 @@ class RemotePlanRepository(
     override suspend fun plans(): List<PlanSummary> =
         PlanJson.parsePlans(request("GET", "/api/plans"))
 
-    override suspend fun generateFromText(text: String, startDate: String?, days: Int?): Plan {
+    override suspend fun generateFromText(
+        text: String,
+        startDate: String?,
+        days: Int?,
+        lodging: String,
+        avoidWalking: Boolean,
+    ): Plan {
         val body = JSONObject().put("text", text)
         if (!startDate.isNullOrBlank()) {
             body.put("startDate", startDate).put("date", startDate)
         }
         if (days != null) body.put("days", days)
+        if (lodging.isNotBlank()) body.put("lodging", lodging)
+        if (avoidWalking) body.put("avoidWalking", true)
         val data = request("POST", "/api/generate", body)
         val raw = data.getJSONObject("plan")
         // 每次生成是一个新计划，切到它，后面的下雨/方案都作用在它身上

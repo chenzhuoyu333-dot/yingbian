@@ -256,6 +256,24 @@ def _rule_preferences(text: str) -> dict:
 
     city = next((c for c in _CITY_WORDS if c in text), "杭州")
 
+    # 住宿："住在XX酒店/住在西湖边/酒店定在XX"
+    lodging = ""
+    for pattern in (
+        r"住在\s*([\u4e00-\u9fa5A-Za-z0-9·\-（）()]{2,20})",
+        r"住\s*([\u4e00-\u9fa5A-Za-z0-9·\-（）()]{2,20}?(?:酒店|宾馆|民宿))",
+        r"(?:酒店|住宿)(?:定|订|安排)?在\s*([\u4e00-\u9fa5A-Za-z0-9·\-（）()]{2,20})",
+    ):
+        found_lodging = re.search(pattern, text)
+        if found_lodging:
+            lodging = re.sub(r"(附近|周边|一带|区域|边)$", "", found_lodging.group(1)).strip("，。、,.")
+            break
+
+    # 少走路：影响交通方式和选点紧凑度
+    avoid_walking = any(
+        w in text
+        for w in ("不想多走路", "少走路", "不想走路", "别走太多", "走不动", "腿脚不便", "不想走太多")
+    )
+
     # 时间：显式 HH:mm 优先，其次"下午/早上/不想早起"这类口头说法
     start_time = "09:30"
     explicit = re.search(r"(\d{1,2})[:：](\d{2})", text)
@@ -327,6 +345,8 @@ def _rule_preferences(text: str) -> dict:
         "days": days,
         "budgetPerPerson": budget,
         "preferHighRating": prefer_rating,
+        "lodging": lodging,
+        "avoidWalking": avoid_walking,
     }
 
 
@@ -394,10 +414,13 @@ _PREF_SYSTEM = """你是行程偏好解析器。把用户的中文需求解析�
   days: 行程天数（整数 1~7）或 null（"3天2晚"→3，"两天"→2，"周末"→2）
   budgetPerPerson: 整数（人均预算上限，元）或 null（"人均100以内/预算200"）
   preferHighRating: true/false 或 null（"想去评价好的/评分高的/口碑好"）
+  lodging: 字符串或 null（"住在XX酒店/住在西湖边/酒店定在XX"里的酒店名或区域）
+  avoidWalking: true/false 或 null（"不想多走路/少走路/走不动/带老人小孩"→true）
 
 示例：输入"想拍照、不想早起，别爬山，轻松一点"
 输出：{"city":null,"startTime":"10:30","endTime":null,"interests":["拍照"],
-       "mustVisit":[],"avoid":["爬山"],"pace":"relaxed","maxTransitMin":null}"""
+       "mustVisit":[],"avoid":["爬山"],"pace":"relaxed","maxTransitMin":null,
+       "lodging":null,"avoidWalking":false}"""
 
 
 def parse_preferences(text: str) -> tuple[dict, str]:
@@ -458,6 +481,15 @@ def parse_preferences(text: str) -> tuple[dict, str]:
 
         merged["preferHighRating"] = bool(
             merged.get("preferHighRating") or fixed.get("preferHighRating")
+        )
+        merged["avoidWalking"] = bool(
+            merged.get("avoidWalking") or fixed.get("avoidWalking")
+        )
+        lodging_value = merged.get("lodging")
+        merged["lodging"] = (
+            str(lodging_value).strip()[:40]
+            if isinstance(lodging_value, str) and lodging_value.strip().lower() not in ("null", "none")
+            else fixed.get("lodging", "")
         )
 
         return merged, "ai"

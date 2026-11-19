@@ -211,9 +211,11 @@ def post_generate(body: dict = Body(...)):
     请求体（全部可选，缺省用默认值）：
       {"city":"杭州","startDate":"2026-11-19","days":2,"startTime":"09:30","endTime":"20:00",
        "interests":["景点","公园","咖啡"],"mustVisit":["清河坊历史文化特色街区"],
-       "avoid":["爬山"],"pace":"normal","maxTransitMin":45,"startPlace":""}
+       "avoid":["爬山"],"pace":"normal","maxTransitMin":45,"startPlace":"",
+       "lodging":"杭州东站","avoidWalking":true}
 
     日期也可以传 date / endDate；date 是 startDate 的兼容别名。
+    lodging 是酒店名或区域；avoidWalking 表示“少走路”。
 
     也可以只给一句话，由 AI 解析成偏好：
       {"text":"想拍照、不想早起、别爬山"}
@@ -259,6 +261,8 @@ def post_generate(body: dict = Body(...)):
             start_place=str(body.get("startPlace") or ""),
             budget_per_person=int(body.get("budgetPerPerson") or 0),
             prefer_high_rating=bool(body.get("preferHighRating") or False),
+            lodging=str(body.get("lodging") or "").strip(),
+            avoid_walking=bool(body.get("avoidWalking") or False),
             days=trip_days,
         )
         raw_plan = generate(prefs)

@@ -119,6 +119,61 @@ class MultiDayTest(unittest.TestCase):
         hotels = [n for n in plan["nodes"] if "hotel" in n["id"]]
         self.assertLessEqual(len(hotels), 6, "天数应被限制在 7 天以内（最多 6 晚住宿）")
 
+    def test_lodging_anchor_drives_next_day(self):
+        """填了住哪儿：当晚回酒店，第二天从酒店出发，通勤按真实路径算。"""
+        plan = generate(
+            Preferences(
+                city="杭州",
+                interests=["景点", "咖啡"],
+                days=2,
+                max_transit_min=45,
+                lodging="湖边公园",
+            )
+        )
+        hotel = next(n for n in plan["nodes"] if n["id"] == "d1_hotel")
+        self.assertIn("湖边公园", hotel["title"])
+        self.assertEqual(hotel["place"], "湖边公园")
+
+        meet2 = next(n for n in plan["nodes"] if n["id"] == "d2_meet")
+        self.assertIn("湖边公园", meet2["title"])
+        self.assertIn("住宿", hotel["title"])
+
+        hotel_edge = next(
+            e for e in plan["edges"] if e["to"] == "d1_hotel"
+        )
+        self.assertNotEqual(hotel_edge["transport"]["source"], "placeholder")
+        self.assertGreater(hotel_edge["minGapMin"], 0, "酒店通勤必须计入时间")
+        last_stop = max(
+            (
+                n
+                for n in plan["nodes"]
+                if n["id"].startswith("d1_") and n["id"] not in ("d1_hotel", "d1_meet")
+            ),
+            key=lambda n: n["start"],
+        )
+        self.assertGreater(hotel["start"], last_stop["end"], "到店时间必须晚于最后一站")
+
+    def test_unresolved_lodging_falls_back_with_warning(self):
+        plan = generate(
+            Preferences(
+                city="杭州",
+                interests=["景点"],
+                days=2,
+                max_transit_min=45,
+                lodging="不存在的神秘酒店",
+            )
+        )
+        hotel = next(n for n in plan["nodes"] if n["id"] == "d1_hotel")
+        self.assertIn("酒店待定", hotel["title"])
+        source = next(
+            e["transport"]["source"] for e in plan["edges"] if e["to"] == "d1_hotel"
+        )
+        self.assertEqual(source, "placeholder")
+        self.assertTrue(
+            any("没搜到" in w for w in plan["generation"]["warnings"]),
+            plan["generation"]["warnings"],
+        )
+
     def test_few_places_degrades_gracefully(self):
         """候选点不够时，多日行程应当少排几天，而不是崩"""
         small = {"status": "1", "count": "2", "pois": [
@@ -157,9 +212,17 @@ class MultiDayTest(unittest.TestCase):
         for edge in plan["edges"]:
             transport = edge.get("transport")
             self.assertIsInstance(transport, dict, edge)
-            self.assertIn(transport["source"], ("amap", "estimate"))
-            self.assertGreater(transport["durationMin"], 0)
+            self.assertIn(transport["source"], ("amap", "estimate", "placeholder"))
+            if transport["source"] == "placeholder":
+                self.assertEqual(transport["durationMin"], 0)
+            else:
+                self.assertGreater(transport["durationMin"], 0)
             self.assertEqual(edge["minGapMin"], transport["durationMin"])
+
+        hotel = next(node for node in plan["nodes"] if node["id"] == "d1_hotel")
+        self.assertTrue(hotel["overnight"])
+        self.assertIn("过夜", hotel["title"])
+        self.assertIn("酒店待定", hotel["title"])
 
 
 if __name__ == "__main__":

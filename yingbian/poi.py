@@ -164,7 +164,7 @@ _CACHE: dict[str, list[Poi]] = {}
 
 # 高德个人免费 Key 的 QPS 很低，连发几个请求就会返回 10021 CUQPS_HAS_EXCEEDED_THE_LIMIT。
 # 这里做两件事：请求间隔节流 + 遇到 10021 退避重试。
-_THROTTLE_SECONDS = 0.4
+_THROTTLE_SECONDS = 0.55
 _last_call_at = 0.0
 
 
@@ -389,6 +389,8 @@ def travel_minutes(a: Poi, b: Poi, mode: str = "transit") -> int:
 _ROUTE_CACHE: dict[str, dict] = {}
 # 高德整体不可用（超时 / Key 无效 / 配额耗尽）时，本次生成不要每条边都再等 3 次重试
 _ROUTE_RETRY_AFTER = 0.0
+# 连续失败计数：单次 QPS 抖动不该把整份计划都锁成估算
+_ROUTE_FAILURES = 0
 
 
 def _route_mode(a: Poi, b: Poi) -> str:
@@ -431,19 +433,65 @@ def _transit_label(transit: dict) -> str:
 
 
 def _estimated_route(a: Poi, b: Poi, mode: str) -> dict:
-    duration = travel_minutes(a, b)
-    label = {"walk": "步行", "driving": "驾车/打车", "transit": "公交/地铁"}.get(mode, "公交/地铁")
+    duration = _estimate_minutes(a, b, mode)
+    label = _MODE_LABEL.get(mode, "公交/地铁")
     return {
         "mode": mode,
         "label": label,
         "distanceM": int(round(distance_m(a, b))),
         "durationMin": duration,
+        "walkM": int(round(distance_m(a, b))) if mode == "walk" else 0,
         "source": "estimate",
         "text": f"{label}估算 · 约 {duration} 分钟（地图暂不可用）",
     }
 
 
-def route_plan(a: Poi, b: Poi, city: str, mode: str | None = None) -> dict:
+_MODE_LABEL = {
+    "walk": "步行",
+    "bicycling": "骑行",
+    "driving": "驾车/打车",
+    "transit": "公交/地铁",
+}
+
+
+def _estimate_minutes(a: Poi, b: Poi, mode: str) -> int:
+    """没有地图数据时的保守估算；不同方式用不同速度，不能全按公交算。"""
+    meters = distance_m(a, b)
+    if mode == "walk":
+        speed, overhead = 4.2 * 1000 / 60, 2
+    elif mode == "bicycling":
+        speed, overhead = 12.0 * 1000 / 60, 3
+    elif mode == "driving":
+        speed, overhead = 25.0 * 1000 / 60, 5
+    else:
+        speed, overhead = 15.0 * 1000 / 60, 10
+    return max(5, int(round(meters * 1.2 / speed)) + overhead)
+
+
+def _transit_walk_m(transit: dict) -> int:
+    """公交方案里所有步行段的总距离；用来实现“少走路”。"""
+    total = 0
+    for segment in transit.get("segments") or []:
+        walk = segment.get("walking") or {}
+        try:
+            total += int(float(walk.get("distance") or 0))
+        except (TypeError, ValueError):
+            continue
+    if total == 0:
+        try:
+            total = int(float(transit.get("walking_distance") or 0))
+        except (TypeError, ValueError):
+            total = 0
+    return total
+
+
+def route_plan(
+    a: Poi,
+    b: Poi,
+    city: str,
+    mode: str | None = None,
+    transit_variant: str = "fastest",
+) -> dict:
     """
     调高德路径规划，返回一段路的交通方式、距离和预计分钟数。
 
@@ -455,9 +503,9 @@ def route_plan(a: Poi, b: Poi, city: str, mode: str | None = None) -> dict:
     import time
 
     chosen = mode or _route_mode(a, b)
-    if chosen not in {"walk", "transit", "driving"}:
+    if chosen not in {"walk", "bicycling", "transit", "driving"}:
         chosen = "transit"
-    cache_key = f"{city}|{a.location}|{b.location}|{chosen}"
+    cache_key = f"{city}|{a.location}|{b.location}|{chosen}|{transit_variant}"
     if cache_key in _ROUTE_CACHE:
         return dict(_ROUTE_CACHE[cache_key])
 
@@ -472,49 +520,174 @@ def route_plan(a: Poi, b: Poi, city: str, mode: str | None = None) -> dict:
         "destination": b.location,
         "key": amap_key,
     }
-    if chosen == "walk":
-        endpoint = "walking"
-    elif chosen == "driving":
-        endpoint = "driving"
-        base["strategy"] = "0"
+    if chosen == "bicycling":
+        # 高德骑行是 v4 接口，返回 errcode/data.paths，不是 v3 的 status/route
+        url = f"https://restapi.amap.com/v4/direction/bicycling?{urllib.parse.urlencode(base)}"
     else:
-        endpoint = "transit/integrated"
-        base.update({"city": city, "cityd": city, "strategy": "0"})
-
-    url = f"https://restapi.amap.com/v3/direction/{endpoint}?{urllib.parse.urlencode(base)}"
+        if chosen == "walk":
+            endpoint = "walking"
+        elif chosen == "driving":
+            endpoint = "driving"
+            base["strategy"] = "0"
+        else:
+            endpoint = "transit/integrated"
+            base.update({"city": city, "cityd": city, "strategy": "0"})
+        url = f"https://restapi.amap.com/v3/direction/{endpoint}?{urllib.parse.urlencode(base)}"
     try:
         payload = _get_with_retry(url)
-        if str(payload.get("status")) != "1":
-            _ROUTE_RETRY_AFTER = time.time() + 60
-            return _estimated_route(a, b, chosen)
-        route = payload.get("route") or {}
-
-        if chosen == "transit":
-            transits = route.get("transits") or []
-            if not transits:
+        if chosen == "bicycling":
+            if str(payload.get("errcode")) != "0":
+                _route_failed()
                 return _estimated_route(a, b, chosen)
-            path = transits[0]
-            label = _transit_label(path)
-        else:
-            paths = route.get("paths") or []
+            paths = (payload.get("data") or {}).get("paths") or []
             if not paths:
                 return _estimated_route(a, b, chosen)
             path = paths[0]
-            label = "步行" if chosen == "walk" else "驾车/打车"
+            label = "骑行"
+        else:
+            if str(payload.get("status")) != "1":
+                _route_failed()
+                return _estimated_route(a, b, chosen)
+            route = payload.get("route") or {}
+
+            if chosen == "transit":
+                transits = route.get("transits") or []
+                if not transits:
+                    return _estimated_route(a, b, chosen)
+                if transit_variant == "least_walking":
+                    path = min(
+                        transits,
+                        key=lambda item: (
+                            _transit_walk_m(item),
+                            int(float(item.get("duration") or 10**9)),
+                        ),
+                    )
+                else:
+                    path = transits[0]
+                label = _transit_label(path)
+            else:
+                paths = route.get("paths") or []
+                if not paths:
+                    return _estimated_route(a, b, chosen)
+                path = paths[0]
+                label = _MODE_LABEL.get(chosen, "公交/地铁")
 
         duration_sec = int(float(path.get("duration") or 0))
         distance = int(float(path.get("distance") or distance_m(a, b)))
         duration = max(1, int(round(duration_sec / 60)))
+        walk_m = distance if chosen == "walk" else (_transit_walk_m(path) if chosen == "transit" else 0)
+        if chosen == "transit" and transit_variant == "least_walking" and walk_m > 0:
+            text = f"{label} · 约 {duration} 分钟（步行 {walk_m} 米，已选少走路方案）"
+        elif chosen == "transit" and walk_m > 0:
+            text = f"{label} · 约 {duration} 分钟（步行 {walk_m} 米）"
+        else:
+            text = f"{label} · 约 {duration} 分钟"
         result = {
             "mode": chosen,
             "label": label,
             "distanceM": distance,
             "durationMin": duration,
+            "walkM": walk_m,
             "source": "amap",
-            "text": f"{label} · 约 {duration} 分钟",
+            "text": text,
         }
         _ROUTE_CACHE[cache_key] = dict(result)
+        _route_succeeded()
         return result
     except Exception:
-        _ROUTE_RETRY_AFTER = time.time() + 60
+        _route_failed()
         return _estimated_route(a, b, chosen)
+
+
+def _route_failed() -> None:
+    """连续 3 次失败才熔断 20 秒；偶发一次就只影响当下这一段。"""
+    global _ROUTE_FAILURES, _ROUTE_RETRY_AFTER
+    import time
+
+    _ROUTE_FAILURES += 1
+    if _ROUTE_FAILURES >= 3:
+        _ROUTE_RETRY_AFTER = time.time() + 20
+
+
+def _route_succeeded() -> None:
+    global _ROUTE_FAILURES
+    _ROUTE_FAILURES = 0
+
+
+def _mark(route: dict, reason: str) -> dict:
+    result = dict(route)
+    result["chosenBy"] = reason
+    return result
+
+
+def choose_route(
+    a: Poi,
+    b: Poi,
+    city: str,
+    avoid_walking: bool = False,
+    allow_taxi: bool = True,
+) -> dict:
+    """
+    一段路该走、骑还是坐车。
+
+    默认是“公交优先”：步行/骑行必须明显更快（至少省 5 分钟）才取代公交。
+    “少走路”则是硬约束：不做纯步行段，公交也挑步行最少的那版；
+    只有当公交下车后还要走很远、或打车能省 10 分钟以上时才打车。
+    """
+    meters = distance_m(a, b)
+
+    # 同一栋楼/隔壁 350 米内，任何交通工具都不如走过去
+    if meters <= 350:
+        return _mark(route_plan(a, b, city, "walk"), "短距离接驳，直接步行")
+
+    if avoid_walking:
+        transit = route_plan(a, b, city, "transit", transit_variant="least_walking")
+        transit_min = int(transit.get("durationMin") or 0)
+        transfer_walk = int(transit.get("walkM") or 0)
+        options = [("transit", transit)]
+        # 只在“下车还要走很远”或“公交确实太慢”时才多查一次打车
+        if allow_taxi and (transfer_walk >= 800 or (meters >= 5000 and transit_min >= 40)):
+            drive = route_plan(a, b, city, "driving")
+            drive_min = int(drive.get("durationMin") or 0)
+            long_transfer_walk = transfer_walk >= 800 and drive_min <= transit_min + 10
+            saves_enough = drive_min <= transit_min - 10
+            if long_transfer_walk or saves_enough:
+                options.append(("driving", drive))
+        kind, best = min(options, key=lambda item: int(item[1].get("durationMin") or 10**6))
+        if kind == "driving":
+            return _mark(best, "少走路：公交步行太远或打车明显更快")
+        return _mark(best, "少走路：已选步行最少的公交方案")
+
+    # 800 米内步行最直接，不值得等车
+    if meters <= 800:
+        return _mark(route_plan(a, b, city, "walk"), "800 米内，步行最直接")
+
+    # 中短途：公交为基准，步行/骑行要“明显更快”才换
+    if meters <= 4500:
+        transit = route_plan(a, b, city, "transit")
+        transit_min = int(transit.get("durationMin") or 10**6)
+        humans: list[tuple[str, dict]] = []
+        if meters <= 2000 and _estimate_minutes(a, b, "walk") <= transit_min - 5:
+            humans.append(("walk", route_plan(a, b, city, "walk")))
+        if _estimate_minutes(a, b, "bicycling") <= transit_min - 5:
+            humans.append(("bicycling", route_plan(a, b, city, "bicycling")))
+        if not humans:
+            return _mark(transit, "公交优先：步行/骑行没有明显更快")
+        kind, best_human = min(humans, key=lambda item: int(item[1].get("durationMin") or 10**6))
+        margin = int(best_human.get("durationMin") or 10**6) <= transit_min - 5
+        if margin:
+            return _mark(best_human, f"比公交快 {transit_min - int(best_human['durationMin'])} 分钟")
+        return _mark(transit, "公交优先：快得不够多，不换")
+
+    # 长途：公交太慢时才打车
+    transit = route_plan(a, b, city, "transit")
+    if not allow_taxi:
+        return _mark(transit, "公交优先")
+    transit_min = int(transit.get("durationMin") or 10**6)
+    if transit_min < 35:
+        return _mark(transit, "公交优先：时长可接受，不额外叫车")
+    drive = route_plan(a, b, city, "driving")
+    drive_min = int(drive.get("durationMin") or 10**6)
+    if drive_min <= transit_min - 15 or transit_min >= 50:
+        return _mark(drive, "公交太慢，改打车")
+    return _mark(transit, "公交优先：打车省得不够多")

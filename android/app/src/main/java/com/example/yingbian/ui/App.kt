@@ -318,9 +318,9 @@ fun YingBianRoot() {
         NewPlanDialog(
             busy = controller.loading,
             error = controller.error,
-            onGenerate = { text, startDate, days ->
+            onGenerate = { text, startDate, days, lodging, avoidWalking ->
                 scope.launch {
-                    controller.createFromText(text, startDate, days)
+                    controller.createFromText(text, startDate, days, lodging, avoidWalking)
                     if (controller.error == null) {
                         newPlanOpen = false
                         controller.generateNote?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }

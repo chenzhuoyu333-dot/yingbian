@@ -106,6 +106,8 @@ fun StateBadge(state: String) {
 @Composable
 fun NodeCard(node: PlanNode, state: String, shift: Int) {
     val accent = stateColor(state)
+    val overnight = node.overnight
+    val hotelUnknown = overnight && node.place.isBlank()
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -115,12 +117,24 @@ fun NodeCard(node: PlanNode, state: String, shift: Int) {
             horizontalAlignment = Alignment.End,
         ) {
             Text(
-                text = node.startWithShift(shift),
-                fontSize = 15.sp,
+                text = when {
+                    hotelUnknown -> "过夜"
+                    overnight -> node.startWithShift(shift)
+                    else -> node.startWithShift(shift)
+                },
+                fontSize = if (overnight) 13.sp else 15.sp,
                 fontWeight = FontWeight.Bold,
                 color = if (state == "ok") Ink else accent,
             )
-            Text(node.endWithShift(shift), fontSize = 11.sp, color = Muted)
+            Text(
+                text = when {
+                    hotelUnknown -> "住宿待定"
+                    overnight -> "到店"
+                    else -> node.endWithShift(shift)
+                },
+                fontSize = if (overnight) 9.sp else 11.sp,
+                color = Muted,
+            )
         }
         Box(modifier = Modifier.width(24.dp), contentAlignment = Alignment.Center) {
             Box(
@@ -159,11 +173,21 @@ fun NodeCard(node: PlanNode, state: String, shift: Int) {
                 }
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    text = listOf(
-                        node.place,
-                        if (node.indoor) "室内" else "室外",
-                        "${node.durationMin} 分钟",
-                    ).filter { it.isNotBlank() }.joinToString(" · "),
+                    text = if (hotelUnknown) {
+                        "具体酒店待定 · 入住时间与酒店通勤未计入"
+                    } else if (overnight) {
+                        listOf(
+                            node.place,
+                            "过夜",
+                            "次日从这里出发",
+                        ).filter { it.isNotBlank() }.joinToString(" · ")
+                    } else {
+                        listOf(
+                            node.place,
+                            if (node.indoor) "室内" else "室外",
+                            "${node.durationMin} 分钟",
+                        ).filter { it.isNotBlank() }.joinToString(" · ")
+                    },
                     fontSize = 12.sp,
                     color = Muted,
                 )
@@ -176,6 +200,7 @@ fun NodeCard(node: PlanNode, state: String, shift: Int) {
 fun EdgeLine(edge: PlanEdge?) {
     val transport = edge?.transport
     val detail = when {
+        transport?.source == "placeholder" -> transport.text.ifBlank { "酒店待定，通勤时间未估算" }
         transport != null -> {
             val distance = when {
                 transport.distanceM <= 0 -> ""
@@ -186,6 +211,7 @@ fun EdgeLine(edge: PlanEdge?) {
                 transport.label.ifBlank { transport.text },
                 distance,
                 if (transport.durationMin > 0) "约 ${transport.durationMin} 分钟" else "",
+                if (transport.walkM > 0 && transport.mode != "walk") "步行 ${transport.walkM} 米" else "",
                 if (transport.fromMap) "高德预估" else "估算",
             ).filter { it.isNotBlank() }.joinToString(" · ")
         }
@@ -214,8 +240,11 @@ fun EdgeLine(edge: PlanEdge?) {
                     fontSize = 10.sp,
                     color = if (transport?.fromMap == true) OkGreen else Muted,
                 )
-                if (transport != null && !transport.fromMap) {
+                if (transport != null && transport.source == "estimate") {
                     Text("地图不可用，已留出保守余量", fontSize = 9.sp, color = Muted)
+                }
+                if (transport != null && transport.source != "placeholder" && transport.chosenBy.isNotBlank()) {
+                    Text(transport.chosenBy, fontSize = 9.sp, color = Muted)
                 }
             }
         }
