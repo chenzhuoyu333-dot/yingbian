@@ -40,9 +40,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.yingbian.data.Impact
 import com.example.yingbian.data.Plan
+import com.example.yingbian.data.PlanEdge
 import com.example.yingbian.data.PlanNode
 import com.example.yingbian.data.RepairAction
 import com.example.yingbian.data.RepairScheme
+import java.util.Locale
 
 val OkGreen = Color(0xFF2E7D32)
 val RiskAmber = Color(0xFFF9A825)
@@ -171,8 +173,26 @@ fun NodeCard(node: PlanNode, state: String, shift: Int) {
 }
 
 @Composable
-fun EdgeLine(gapMin: Int) {
-    Row(modifier = Modifier.height(24.dp)) {
+fun EdgeLine(edge: PlanEdge?) {
+    val transport = edge?.transport
+    val detail = when {
+        transport != null -> {
+            val distance = when {
+                transport.distanceM <= 0 -> ""
+                transport.distanceM < 1000 -> "${transport.distanceM} 米"
+                else -> String.format(Locale.CHINA, "%.1f 公里", transport.distanceM / 1000.0)
+            }
+            listOf(
+                transport.label.ifBlank { transport.text },
+                distance,
+                if (transport.durationMin > 0) "约 ${transport.durationMin} 分钟" else "",
+                if (transport.fromMap) "高德预估" else "估算",
+            ).filter { it.isNotBlank() }.joinToString(" · ")
+        }
+        (edge?.minGapMin ?: 0) > 0 -> "缓冲 ${edge?.minGapMin} 分钟"
+        else -> ""
+    }
+    Row(modifier = Modifier.height(38.dp)) {
         Spacer(Modifier.width(56.dp))
         Box(modifier = Modifier.width(24.dp).fillMaxHeight()) {
             Canvas(modifier = Modifier.fillMaxSize()) {
@@ -185,13 +205,19 @@ fun EdgeLine(gapMin: Int) {
                 )
             }
         }
-        if (gapMin > 0) {
-            Text(
-                text = "缓冲 $gapMin 分钟",
+        if (detail.isNotBlank()) {
+            Column(
                 modifier = Modifier.padding(start = 8.dp).align(Alignment.CenterVertically),
-                fontSize = 10.sp,
-                color = Muted,
-            )
+            ) {
+                Text(
+                    text = detail,
+                    fontSize = 10.sp,
+                    color = if (transport?.fromMap == true) OkGreen else Muted,
+                )
+                if (transport != null && !transport.fromMap) {
+                    Text("地图不可用，已留出保守余量", fontSize = 9.sp, color = Muted)
+                }
+            }
         }
     }
 }

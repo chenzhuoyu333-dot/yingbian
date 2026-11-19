@@ -300,9 +300,12 @@ python -m yingbian generate --city 杭州 --interests 景点,公园,博物馆,�
 
 ```powershell
 POST /api/generate
-{"city":"杭州","interests":["景点","公园","咖啡"],
+{"city":"杭州","startDate":"2026-11-19","days":2,"interests":["景点","公园","咖啡"],
  "mustVisit":["清河坊历史文化特色街区"],"pace":"normal","maxTransitMin":45}
 ```
+
+App 的「新建行程」里先选开始日期和玩几天，再写偏好。
+不选天数时由文字里的“3天2晚”“两天一夜”自动解析。
 
 产出是一张**与 `data/plan-*.json` 同构**的计划图，并且会注册进计划表，
 所以生成完可以直接 `/event`、`/repair`、`/apply`、`/undo`。
@@ -321,15 +324,23 @@ POST /api/generate
 搜不到或被 `avoid` 挡掉时，写进 `generation.unresolvedMustVisit` 并给 warning，
 App 顶部显示「必去点待确认」——不能假装它已经排进去了。
 
-**③ 通勤用估算，不调路径规划**
-一次生成二三十条边，逐个调高德路径规划既慢又吃免费配额（个人 Key QPS 很低，连发就 `10021`）。
-所以用直线距离 + 保守分速度估算，标 `confidence: low`，不假装精确。
-`poi.py` 里另有请求节流与退避重试。
+**③ 排序用估算，最终通勤用高德路径规划**
+候选排序仍用直线距离，避免给每个候选点都调接口。
+最终排进行程的每条边再调一次高德路径规划，返回：
+
+- `transport.mode`：`walk` / `transit` / `driving`
+- `transport.label`：步行、地铁几号线、驾车/打车
+- `transport.distanceM` / `durationMin`：地图距离与预计分钟数
+- `transport.source`：`amap` 或 `estimate`
+
+高德接口不可用时退回保守估算，并明确标成 `estimate`，不伪装成地图结果。
+每个节点带 `date`，多日行程按天分组，天与天之间不连边。
 
 ### 已知边界
 
-- 高德 POI **没有开放时间和门票**，每个点都是 `confidence: low`，需要用户确认
+- 高德 POI 的营业时间和门票可能缺失，缺失项会在 `poi.missing` 里标出，需要用户确认
 - 停留时长是经验值（景点 90 分、餐饮 60 分、咖啡 40 分），按 `pace` 缩放
+- 住宿节点只表示“今晚要住”，具体酒店仍需用户自己定
 - 风格词（"拍照""夜景"）不能当 POI 关键词检索，会被翻译掉；全被翻译掉时退回默认类别
 - **生成结果必须人工过一遍**再拿去演示
 

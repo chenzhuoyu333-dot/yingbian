@@ -208,9 +208,11 @@ def post_generate(body: dict = Body(...)):
     按偏好生成一份行程，并直接注册进计划表 —— 生成完就能发事件、求方案、应用、撤销。
 
     请求体（全部可选，缺省用默认值）：
-      {"city":"杭州","date":"2026-11-14","startTime":"09:30","endTime":"20:00",
+      {"city":"杭州","startDate":"2026-11-19","days":2,"startTime":"09:30","endTime":"20:00",
        "interests":["景点","公园","咖啡"],"mustVisit":["清河坊历史文化特色街区"],
        "avoid":["爬山"],"pace":"normal","maxTransitMin":45,"startPlace":""}
+
+    日期也可以传 date / endDate；date 是 startDate 的兼容别名。
 
     也可以只给一句话，由 AI 解析成偏好：
       {"text":"想拍照、不想早起、别爬山"}
@@ -229,9 +231,23 @@ def post_generate(body: dict = Body(...)):
         interpretation = {"text": text, "source": source}
 
     try:
+        trip_date = str(
+            body.get("startDate")
+            or body.get("date")
+            or datetime.now().strftime("%Y-%m-%d")
+        )
+        trip_days = int(body.get("days") or 1)
+        end_text = str(body.get("endDate") or "").strip()
+        if end_text:
+            try:
+                start_dt = datetime.strptime(trip_date, "%Y-%m-%d")
+                end_dt = datetime.strptime(end_text, "%Y-%m-%d")
+                trip_days = max(1, (end_dt - start_dt).days + 1)
+            except ValueError:
+                pass
         prefs = Preferences(
             city=str(body.get("city") or "杭州"),
-            date=str(body.get("date") or "2026-11-14"),
+            date=trip_date,
             start_time=str(body.get("startTime") or "09:30"),
             end_time=str(body.get("endTime") or "20:00"),
             interests=list(body.get("interests") or []),
@@ -242,7 +258,7 @@ def post_generate(body: dict = Body(...)):
             start_place=str(body.get("startPlace") or ""),
             budget_per_person=int(body.get("budgetPerPerson") or 0),
             prefer_high_rating=bool(body.get("preferHighRating") or False),
-            days=int(body.get("days") or 1),
+            days=trip_days,
         )
         raw_plan = generate(prefs)
     except Exception as exc:  # 没配 Key / 搜不到地点 / 网络失败，都给出可读原因

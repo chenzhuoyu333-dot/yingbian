@@ -131,7 +131,13 @@ fun YingBianRoot() {
                         // 首页不再显示日期：日期在每张卡片上已经有了，标题下再挂一个纯属重复
                         if (controller.screen != AppScreen.Home) {
                             Text(
-                                text = controller.plan?.date ?: "行程变化助手",
+                                text = controller.plan?.let { plan ->
+                                    if (plan.endDate.isNotBlank() && plan.endDate != plan.date) {
+                                        "${plan.date} → ${plan.endDate}"
+                                    } else {
+                                        plan.date
+                                    }
+                                } ?: "行程变化助手",
                                 fontSize = 11.sp,
                                 color = Muted,
                             )
@@ -300,9 +306,9 @@ fun YingBianRoot() {
         NewPlanDialog(
             busy = controller.loading,
             error = controller.error,
-            onGenerate = { text ->
+            onGenerate = { text, startDate, days ->
                 scope.launch {
-                    controller.createFromText(text)
+                    controller.createFromText(text, startDate, days)
                     if (controller.error == null) {
                         newPlanOpen = false
                         controller.generateNote?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }

@@ -29,6 +29,8 @@ data class PlanNode(
     val contact: String,
     val persons: List<String>,
     val sacrifice: String,
+    /** 多日行程里这个节点属于哪一天（YYYY-MM-DD）；旧计划为空 */
+    val date: String = "",
 ) {
     val durationMin: Int
         get() = (parseMinutes(end) - parseMinutes(start)).coerceAtLeast(0)
@@ -38,16 +40,34 @@ data class PlanNode(
     fun endWithShift(shift: Int): String = formatMinutes(parseMinutes(end) + shift)
 }
 
+/**
+ * 从上一站到这一站怎么走。source=amap 是高德路径规划，
+ * source=estimate 表示接口不可用、使用了本地估算，界面必须如实区分。
+ */
+data class PlanTransport(
+    val mode: String,
+    val label: String,
+    val distanceM: Int,
+    val durationMin: Int,
+    val source: String,
+    val text: String,
+) {
+    val fromMap: Boolean get() = source == "amap"
+}
+
 data class PlanEdge(
     val from: String,
     val to: String,
     val minGapMin: Int,
+    val transport: PlanTransport? = null,
 )
 
 data class Plan(
     val planId: String,
     val title: String,
     val date: String,
+    val endDate: String = "",
+    val days: Int = 1,
     val version: Int,
     val nodes: List<PlanNode>,
     val edges: List<PlanEdge>,
@@ -319,13 +339,25 @@ object PlanJson {
                     (0 until array.length()).map { index -> array.optString(index) }
                 }.orEmpty(),
                 sacrifice = item.text("sacrifice"),
+                date = item.text("date"),
             )
         }
         val edges = raw.optJSONArray("edges")?.objects().orEmpty().map { item ->
+            val transport = item.optJSONObject("transport")?.let { t ->
+                PlanTransport(
+                    mode = t.text("mode"),
+                    label = t.text("label"),
+                    distanceM = t.optInt("distanceM", 0),
+                    durationMin = t.optInt("durationMin", 0),
+                    source = t.text("source").ifBlank { "estimate" },
+                    text = t.text("text"),
+                )
+            }
             PlanEdge(
                 from = item.text("from"),
                 to = item.text("to"),
                 minGapMin = item.optInt("minGapMin", 0),
+                transport = transport,
             )
         }
         // 生成器把这些放在 generation 字段里；内置计划没有这一段，读成空即可
@@ -338,6 +370,8 @@ object PlanJson {
             planId = raw.text("planId"),
             title = raw.text("title"),
             date = raw.text("date"),
+            endDate = raw.text("endDate"),
+            days = raw.optInt("days", generation?.optInt("days", 1) ?: 1).coerceAtLeast(1),
             version = raw.optInt("version", 1),
             nodes = nodes,
             edges = edges,
