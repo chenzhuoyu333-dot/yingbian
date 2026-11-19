@@ -69,7 +69,8 @@ class GenerateApiTest(unittest.TestCase):
             # 能直接发事件（这条是重点）
             ev = self.client.post(f"/api/plan/{pid}/event", json=RAIN).json()
             self.assertTrue(ev["ok"], ev)
-            self.assertIn("n_", "".join(ev["data"]["states"].keys()))
+            # 多日行程的节点 id 带天前缀（d1_n1 / d2_meet ...）
+            self.assertIn("d1_", "".join(ev["data"]["states"].keys()))
 
             # 能直接求方案
             rp = self.client.post(f"/api/plan/{pid}/repair", json={"event": RAIN}).json()

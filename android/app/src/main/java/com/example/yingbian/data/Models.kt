@@ -55,6 +55,8 @@ data class Plan(
     val generationWarnings: List<String> = emptyList(),
     /** 用户点名但没排进去的必去点，界面上要标「待确认」 */
     val unresolvedMustVisit: List<String> = emptyList(),
+    /** 生成器对用户那句话的理解，例如「3 天 · 杭州 · 想拍照 · 避开爬山」 */
+    val understanding: String = "",
 ) {
     fun node(id: String): PlanNode? = nodes.firstOrNull { it.id == id }
 }
@@ -183,6 +185,8 @@ data class Weather(
     val basis: String = "",
     /** isDemo 为真时，后端给的原因说明 */
     val note: String = "",
+    /** 这份天气属于哪个地点（后端按行程坐标查出来的） */
+    val place: String = "",
 )
 
 fun parseMinutes(value: String): Int {
@@ -328,6 +332,7 @@ object PlanJson {
         val generation = raw.optJSONObject("generation")
         val warnings = generation?.optJSONArray("warnings")?.strings().orEmpty()
         val unresolved = generation?.optJSONArray("unresolvedMustVisit")?.strings().orEmpty()
+        val humanSummary = generation?.optString("humanSummary", "").orEmpty()
 
         return Plan(
             planId = raw.text("planId"),
@@ -338,6 +343,7 @@ object PlanJson {
             edges = edges,
             generationWarnings = warnings,
             unresolvedMustVisit = unresolved,
+            understanding = humanSummary,
         )
     }
 
@@ -425,6 +431,7 @@ object PlanJson {
         isDemo = data.optBoolean("isDemo", false),
         basis = data.optString("basis", ""),
         note = data.optString("note", ""),
+        place = data.optString("place", ""),
     )
 
     fun parseVote(raw: JSONObject): VoteState {

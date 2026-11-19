@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
@@ -47,7 +48,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.example.yingbian.data.ApiConfig
 import com.example.yingbian.data.ApiSettings
-import com.example.yingbian.data.GeneratePrefs
 import com.example.yingbian.data.LocationHelper
 import com.example.yingbian.data.createRepository
 import kotlinx.coroutines.Dispatchers
@@ -65,7 +65,6 @@ fun YingBianRoot() {
     val locationHelper = remember { LocationHelper(context) }
     var debugOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
-    var generateOpen by remember { mutableStateOf(false) }
     var voteOpen by remember { mutableStateOf(false) }
     var newPlanOpen by remember { mutableStateOf(false) }
     var activityOpen by remember { mutableStateOf(false) }
@@ -73,7 +72,7 @@ fun YingBianRoot() {
     suspend fun refreshWeatherFromLocation() {
         val point = withContext(Dispatchers.IO) { locationHelper.lastKnown() }
         if (point == null) {
-            Toast.makeText(context, "没取到定位，仍可使用默认位置", Toast.LENGTH_LONG).show()
+            Toast.makeText(context, "没取到定位，仍可查看行程本身", Toast.LENGTH_LONG).show()
         } else {
             controller.refreshWeather(point.first, point.second)
         }
@@ -85,7 +84,7 @@ fun YingBianRoot() {
         if (grants.values.any { it }) {
             scope.launch { refreshWeatherFromLocation() }
         } else {
-            Toast.makeText(context, "没有定位权限，仍可使用默认位置", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "没有定位权限，仍可查看行程本身", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -129,16 +128,20 @@ fun YingBianRoot() {
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                         )
-                        Text(
-                            text = controller.plan?.date ?: "行程变化助手",
-                            fontSize = 11.sp,
-                            color = Muted,
-                        )
+                        // 首页不再显示日期：日期在每张卡片上已经有了，标题下再挂一个纯属重复
+                        if (controller.screen != AppScreen.Home) {
+                            Text(
+                                text = controller.plan?.date ?: "行程变化助手",
+                                fontSize = 11.sp,
+                                color = Muted,
+                            )
+                        }
                     }
                 },
                 actions = {
-                    TextButton(onClick = { generateOpen = true }) {
-                        Text("生成行程", fontSize = 13.sp)
+                    // 只有一个入口：加号 → 输入一句话生成行程
+                    IconButton(onClick = { newPlanOpen = true }) {
+                        Icon(Icons.Default.Add, contentDescription = "新建行程")
                     }
                     if ((controller.plan?.version ?: 1) > 1) {
                         TextButton(onClick = { scope.launch { controller.undo() } }) {
@@ -331,28 +334,6 @@ fun YingBianRoot() {
             rows = controller.activityRows,
             members = controller.members,
             onDismiss = { activityOpen = false },
-        )
-    }
-
-    if (generateOpen) {
-        GenerateDialog(
-            initial = remember { GeneratePrefs() },
-            busy = controller.loading,
-            error = controller.error,
-            onGenerate = { prefs ->
-                scope.launch {
-                    controller.generate(prefs)
-                    if (controller.error == null) {
-                        generateOpen = false
-                        val note = controller.generateNote
-                        if (!note.isNullOrBlank()) {
-                            Toast.makeText(context, note, Toast.LENGTH_SHORT).show()
-                        }
-                        controller.clearGenerateNote()
-                    }
-                }
-            },
-            onDismiss = { generateOpen = false },
         )
     }
 
