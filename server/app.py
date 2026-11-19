@@ -29,6 +29,7 @@ from yingbian.generate import Preferences, generate
 from yingbian.location import checkin as location_checkin
 from yingbian.location import locate as location_locate
 from yingbian.models import Plan, PlanError, parse_time
+from yingbian.regions import load_regions
 from yingbian.repair import RepairResult, apply_actions
 from yingbian.weather import fetch_weather
 
@@ -338,6 +339,20 @@ def _version_guard(plan, body: dict):
             409,
         )
     return None
+
+
+@app.get("/api/regions")
+def get_regions(force: bool = Query(default=False)):
+    """省 → 市两级清单，供新建行程时选目的地。
+
+    数据来自高德行政区划接口，首次调用后缓存到 data/regions.json，
+    之后秒回。取不到就返回空列表，界面退回手输城市，不编数据。
+    """
+    try:
+        data = load_regions(force=force)
+    except Exception as exc:
+        return _error("REGIONS_FAILED", str(exc))
+    return _ok(data)
 
 
 @app.get("/api/plans")

@@ -19,6 +19,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DateRangePicker
+import androidx.compose.material3.rememberDateRangePickerState
+import com.example.yingbian.data.Province
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -302,6 +306,272 @@ private fun DetailLine(label: String, value: String) {
         Text("$label：", fontSize = 11.sp, color = Muted)
         Text(value, fontSize = 11.sp, color = Ink)
     }
+}
+
+/**
+ * 新建行程（整屏）：目的地 → 起止日期 → 一句话偏好。
+ *
+ * 刻意不给"几天"这个输入：用户脑子里是"11.20 到 11.24"，
+ * 不是"4 晚 5 天"。天数由后端从起止日期算，少一个要用户换算的字段。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun NewPlanScreen(
+    regions: List<Province>,
+    busy: Boolean,
+    error: String?,
+    onCreate: (city: String, startDate: String, endDate: String, text: String) -> Unit,
+) {
+    var city by remember { mutableStateOf("") }
+    var startDate by remember { mutableStateOf("") }
+    var endDate by remember { mutableStateOf("") }
+    var text by remember { mutableStateOf("") }
+    var regionOpen by remember { mutableStateOf(false) }
+    var dateOpen by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 8.dp),
+    ) {
+        Text("你想去哪里？", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Spacer(Modifier.height(10.dp))
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = Color.White,
+            shape = RoundedCornerShape(16.dp),
+            shadowElevation = 2.dp,
+            onClick = { regionOpen = true },
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                if (city.isBlank()) {
+                    Text("选择省份和城市", fontSize = 13.sp, color = Muted)
+                } else {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            color = Color(0xFFF0EDFF),
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
+                            Text(
+                                text = city,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = Ink,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Text("点这里展开省份 → 城市", fontSize = 10.sp, color = Muted)
+            }
+        }
+
+        Spacer(Modifier.height(22.dp))
+        Text("你想去多久？", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Spacer(Modifier.height(10.dp))
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = Color.White,
+            shape = RoundedCornerShape(16.dp),
+            shadowElevation = 2.dp,
+            onClick = { dateOpen = true },
+        ) {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("🗓", fontSize = 16.sp)
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = if (startDate.isBlank() && endDate.isBlank()) {
+                        "选择起止日期"
+                    } else {
+                        "$startDate → $endDate"
+                    },
+                    fontSize = 14.sp,
+                    color = if (startDate.isBlank()) Muted else Ink,
+                    modifier = Modifier.weight(1f),
+                )
+                Text("›", fontSize = 16.sp, color = Muted)
+            }
+        }
+
+        Spacer(Modifier.height(22.dp))
+        Text("说说你想怎么玩", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            placeholder = { Text("想拍照、不想多走路，人均 100 以内", fontSize = 12.sp) },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 3,
+        )
+
+        if (!error.isNullOrBlank()) {
+            Spacer(Modifier.height(10.dp))
+            Text("生成失败：$error", fontSize = 12.sp, color = ConflictOrange)
+        }
+
+        Spacer(Modifier.height(24.dp))
+        Button(
+            onClick = { onCreate(city, startDate, endDate, text) },
+            enabled = !busy && city.isNotBlank() && startDate.isNotBlank() && endDate.isNotBlank(),
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+        ) {
+            Text(if (busy) "生成中…" else "生成行程", fontSize = 15.sp)
+        }
+        Spacer(Modifier.height(20.dp))
+    }
+
+    if (regionOpen) {
+        RegionPickerDialog(
+            regions = regions,
+            selected = city,
+            onPick = { picked ->
+                city = picked
+                regionOpen = false
+            },
+            onDismiss = { regionOpen = false },
+        )
+    }
+
+    if (dateOpen) {
+        DateRangeDialog(
+            onPick = { start, end ->
+                startDate = start
+                endDate = end
+                dateOpen = false
+            },
+            onDismiss = { dateOpen = false },
+        )
+    }
+}
+
+/** 省市两级选择：先省，再市；都带搜索框 */
+@Composable
+fun RegionPickerDialog(
+    regions: List<Province>,
+    selected: String,
+    onPick: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var province by remember { mutableStateOf<String?>(null) }
+    var query by remember { mutableStateOf("") }
+
+    val cities = remember(province, regions) {
+        regions.firstOrNull { it.name == province }?.cities.orEmpty()
+    }
+    val shownProvinces = remember(query, regions) {
+        if (query.isBlank()) regions else regions.filter { it.name.contains(query) }
+    }
+    val shownCities = remember(query, cities) {
+        if (query.isBlank()) cities else cities.filter { it.contains(query) }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (province == null) "选择省份" else province!!) },
+        text = {
+            Column {
+                if (regions.isEmpty()) {
+                    Text("省市清单没取到，请检查网络或后端", fontSize = 12.sp, color = ConflictOrange)
+                } else {
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        placeholder = { Text(if (province == null) "搜索省份" else "搜索城市", fontSize = 12.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LazyColumn(modifier = Modifier.height(320.dp)) {
+                        if (province == null) {
+                            items(shownProvinces, key = { it.name }) { item ->
+                                TextButton(
+                                    onClick = {
+                                        province = item.name
+                                        query = ""
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        text = item.name + "  (" + item.cities.size + ")",
+                                        fontSize = 13.sp,
+                                        color = Ink,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
+                            }
+                        } else {
+                            items(shownCities, key = { it }) { name ->
+                                TextButton(
+                                    onClick = { onPick(name) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(
+                                        text = if (name == selected) "✓ " + name else name,
+                                        fontSize = 13.sp,
+                                        color = if (name == selected) OkGreen else Ink,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (province != null) {
+                TextButton(onClick = { province = null; query = "" }) { Text("返回省份") }
+            } else {
+                TextButton(onClick = onDismiss) { Text("关闭") }
+            }
+        },
+    )
+}
+
+/** 起止日期：Material3 的日期范围选择器 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DateRangeDialog(
+    onPick: (String, String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val state = rememberDateRangePickerState()
+
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val start = state.selectedStartDateMillis
+                    val end = state.selectedEndDateMillis
+                    if (start != null && end != null) {
+                        onPick(formatMillis(start), formatMillis(end))
+                    }
+                },
+            ) { Text("确定") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    ) {
+        DateRangePicker(
+            state = state,
+            title = { Text("选择起止日期", modifier = Modifier.padding(16.dp)) },
+            showModeToggle = false,
+            modifier = Modifier.height(460.dp),
+        )
+    }
+}
+
+/** 毫秒 → yyyy-MM-dd（按 UTC 取，避免时区把日期算偏一天） */
+private fun formatMillis(millis: Long): String {
+    val date = java.util.Date(millis)
+    val fmt = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+    fmt.timeZone = java.util.TimeZone.getTimeZone("UTC")
+    return fmt.format(date)
 }
 
 /**

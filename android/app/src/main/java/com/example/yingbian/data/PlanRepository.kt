@@ -42,11 +42,20 @@ interface PlanRepository {
     /** 历史行程列表（最近改过的排前面） */
     suspend fun plans(): List<PlanSummary>
     /** 一句话新建：交给后端 AI 解析偏好再排行程 */
-    suspend fun generateFromText(text: String, startDate: String? = null, days: Int? = null): Plan
+    suspend fun generateFromText(
+        text: String,
+        startDate: String? = null,
+        endDate: String? = null,
+        city: String? = null,
+        days: Int? = null,
+    ): Plan
     /** 切换到某份已有行程 */
     suspend fun openPlan(planId: String): Plan
     /** 删除自己生成的行程 */
     suspend fun deletePlan(planId: String)
+
+    /** 省 → 市清单，新建行程时选目的地用 */
+    suspend fun regions(): List<Province>
 
     /**
      * 按当前位置判断是否落后于计划。
@@ -306,12 +315,20 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
         )
     }
 
-    override suspend fun generateFromText(text: String, startDate: String?, days: Int?): Plan =
+    override suspend fun generateFromText(
+        text: String,
+        startDate: String?,
+        endDate: String?,
+        city: String?,
+        days: Int?,
+    ): Plan =
         throw IOException("离线模式无法按文字生成，请连上后端")
 
     override suspend fun openPlan(planId: String): Plan = loadPlan()
 
     override suspend fun deletePlan(planId: String) = Unit
+
+    override suspend fun regions(): List<Province> = emptyList()
 
     override suspend fun locate(lat: Double, lng: Double, now: String?): LocateResult =
         throw IOException("离线模式无法做定位检查，请连上后端")
@@ -538,11 +555,19 @@ class RemotePlanRepository(
     override suspend fun plans(): List<PlanSummary> =
         PlanJson.parsePlans(request("GET", "/api/plans"))
 
-    override suspend fun generateFromText(text: String, startDate: String?, days: Int?): Plan {
+    override suspend fun generateFromText(
+        text: String,
+        startDate: String?,
+        endDate: String?,
+        city: String?,
+        days: Int?,
+    ): Plan {
         val body = JSONObject().put("text", text)
         if (!startDate.isNullOrBlank()) {
             body.put("startDate", startDate).put("date", startDate)
         }
+        if (!endDate.isNullOrBlank()) body.put("endDate", endDate)
+        if (!city.isNullOrBlank()) body.put("city", city)
         if (days != null) body.put("days", days)
         val data = request("POST", "/api/generate", body)
         val raw = data.getJSONObject("plan")
@@ -557,6 +582,9 @@ class RemotePlanRepository(
         this.planId = planId
         return loadPlan()
     }
+
+    override suspend fun regions(): List<Province> =
+        PlanJson.parseRegions(request("GET", "/api/regions"))
 
     override suspend fun locate(lat: Double, lng: Double, now: String?): LocateResult {
         val body = JSONObject()

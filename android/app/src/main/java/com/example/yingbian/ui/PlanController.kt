@@ -14,6 +14,7 @@ import com.example.yingbian.data.MemberInfo
 import com.example.yingbian.data.Plan
 import com.example.yingbian.data.PlanRepository
 import com.example.yingbian.data.PlanSummary
+import com.example.yingbian.data.Province
 import com.example.yingbian.data.RepairAction
 import com.example.yingbian.data.RepairScheme
 import com.example.yingbian.data.VoteState
@@ -21,6 +22,7 @@ import com.example.yingbian.data.Weather
 
 enum class AppScreen(val label: String) {
     Home("计划"),
+    NewPlan("新建"),
     Plan("行程"),
     Scheme("方案"),
     Notify("通知"),
@@ -231,6 +233,67 @@ class PlanController(
     var homeLoading by mutableStateOf(false)
         private set
 
+    // ── 新建行程页 ────────────────────────────────
+    var regions by mutableStateOf<List<Province>>(emptyList())
+        private set
+    var regionsLoading by mutableStateOf(false)
+        private set
+
+    suspend fun loadRegions() {
+        if (regions.isNotEmpty()) return
+        regionsLoading = true
+        try {
+            regions = repo.regions()
+        } catch (exception: Exception) {
+            regions = emptyList()
+        } finally {
+            regionsLoading = false
+        }
+    }
+
+    /**
+     * 新建行程：目的地 + 起止日期 + 一句话偏好。
+     * 日期只传起止，天数由后端算 —— 界面上不让用户再填"几天"。
+     */
+    suspend fun createTrip(
+        city: String,
+        startDate: String,
+        endDate: String,
+        text: String,
+    ) {
+        loading = true
+        error = null
+        generateNote = null
+        try {
+            plan = repo.generateFromText(
+                text = text,
+                startDate = startDate,
+                endDate = endDate,
+                city = city,
+            )
+            impact = null
+            schemes = emptyList()
+            selectedSchemeId = null
+            notifications = emptyList()
+            notificationSelection = emptySet()
+            todos = emptyList()
+            todoDone = emptySet()
+            lastScheme = null
+            planBeforeApply = null
+            showImpact = false
+            blockedMessage = null
+            blockedNode = null
+            screen = AppScreen.Plan
+            weather = runCatching { repo.planWeather() }.getOrNull()
+            generateNote = "已生成 ${plan?.nodes?.size ?: 0} 个节点"
+            loadHome()
+        } catch (exception: Exception) {
+            error = exception.message ?: "生成失败"
+        } finally {
+            loading = false
+        }
+    }
+
     suspend fun loadHome() {
         homeLoading = true
         try {
@@ -252,7 +315,7 @@ class PlanController(
         error = null
         generateNote = null
         try {
-            plan = repo.generateFromText(text, startDate, days)
+            plan = repo.generateFromText(text = text, startDate = startDate, days = days)
             impact = null
             schemes = emptyList()
             selectedSchemeId = null
