@@ -137,7 +137,7 @@ fun PlanScreen(
                     shift = impact?.shiftOf(node.id) ?: 0,
                 )
                 if (index < plan.nodes.lastIndex) {
-                    EdgeLine(gapBetween(plan, node, plan.nodes[index + 1]))
+                    EdgeLine(gapBetween(plan, node, plan.nodes[index + 1]), modeBetween(plan, node, plan.nodes[index + 1]))
                 }
             }
             item { Spacer(Modifier.height(8.dp)) }
@@ -155,6 +155,8 @@ fun PlanScreen(
     }
 }
 
+private fun modeBetween(plan: Plan, from: PlanNode, to: PlanNode): String =
+    plan.edges.firstOrNull { it.from == from.id && it.to == to.id }?.travelMode ?: ""
 private fun gapBetween(plan: Plan, from: PlanNode, to: PlanNode): Int =
     plan.edges.firstOrNull { it.from == from.id && it.to == to.id }?.minGapMin ?: 0
 

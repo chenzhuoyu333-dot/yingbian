@@ -32,6 +32,7 @@ from .poi import (
     travel_minutes,
 )
 from .propagate import Event, propagate
+from .route import best_route
 
 PACE_FACTOR = {"relaxed": 1.3, "normal": 1.0, "packed": 0.75}
 MAX_NODES = 14
@@ -74,6 +75,8 @@ class Preferences:
     start_place: str = ""
     # 行程天数：1 = 当天往返，>1 会按天切开并补住宿节点
     days: int = 1
+    # 说过"不想多走路"→ 景点之间一律按公共交通算
+    avoid_walking: bool = False
     # 由 AI 从"人均 100 以内""想去评价好的"这类话里解析出来
     budget_per_person: int = 0      # 0 表示不限
     prefer_high_rating: bool = False
@@ -498,6 +501,31 @@ def generate(prefs: Preferences) -> dict:
         if not picks:
             break   # 后面的天排不出东西了，就到此为止
 
+        # 选点用的是直线估算，这里按真实交通重排一遍时间。
+        # 真实耗时通常比估算长，排不下的点要截掉，否则会出现时间重叠。
+        factor = PACE_FACTOR.get(prefs.pace, 1.0)
+        retimed: list[tuple[Poi, int, int, object]] = []
+        clock = day_start
+        prev_poi = current
+        for poi, _arrive, _leave, _transit in picks:
+            route = best_route(
+                prev_poi.lat, prev_poi.lng, poi.lat, poi.lng, prefs.avoid_walking
+            )
+            arrive = clock + route.minutes
+            leave = arrive + max(20, int(poi.stay_min * factor))
+            if leave > day_end:
+                warnings.append(
+                    f"第 {day} 天时间不够，「{poi.name}」没排进去（真实交通比估算久）"
+                )
+                break
+            retimed.append((poi, arrive, leave, route))
+            prev_poi = poi
+            clock = leave
+
+        if not retimed:
+            break
+        picks = retimed
+
         # 每天一个集合/出发节点
         meet_id = f"d{day}_meet"
         nodes.append(
@@ -519,18 +547,19 @@ def generate(prefs: Preferences) -> dict:
 
         prev_poi = current
         prev_id = meet_id
-        for i, (poi, arrive, leave, transit) in enumerate(picks, start=1):
-            node = _node_from_poi(poi, arrive, leave, transit, i, poi.name in locked_names, prefs)
+        for i, (poi, arrive, leave, route) in enumerate(picks, start=1):
+            node = _node_from_poi(
+                poi, arrive, leave, route.minutes, i, poi.name in locked_names, prefs
+            )
             node["id"] = f"d{day}_n{i}"
             nodes.append(node)
-            edges.append(
-                {
-                    "from": prev_id,
-                    "to": node["id"],
-                    "type": "precedes",
-                    "minGapMin": travel_minutes(prev_poi, poi),
-                }
-            )
+            edge = {
+                "from": prev_id,
+                "to": node["id"],
+                "type": "precedes",
+            }
+            edge.update(route.to_edge())
+            edges.append(edge)
             prev_poi, prev_id = poi, node["id"]
             used_names.add(poi.name)
 
@@ -566,6 +595,9 @@ def generate(prefs: Preferences) -> dict:
                     "to": hotel_id,
                     "type": "precedes",
                     "minGapMin": 15,
+                    "travelMode": "walking",
+                    "travelSource": "estimate",
+                    "travelDistanceM": 0,
                 }
             )
             current = prev_poi

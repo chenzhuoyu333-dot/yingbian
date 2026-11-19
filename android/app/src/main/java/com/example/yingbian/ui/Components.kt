@@ -171,7 +171,7 @@ fun NodeCard(node: PlanNode, state: String, shift: Int) {
 }
 
 @Composable
-fun EdgeLine(gapMin: Int) {
+fun EdgeLine(gapMin: Int, travelMode: String = "") {
     Row(modifier = Modifier.height(24.dp)) {
         Spacer(Modifier.width(56.dp))
         Box(modifier = Modifier.width(24.dp).fillMaxHeight()) {
@@ -187,7 +187,7 @@ fun EdgeLine(gapMin: Int) {
         }
         if (gapMin > 0) {
             Text(
-                text = "缓冲 $gapMin 分钟",
+                text = transportLabel(travelMode) + " " + gapMin + " 分钟",
                 modifier = Modifier.padding(start = 8.dp).align(Alignment.CenterVertically),
                 fontSize = 10.sp,
                 color = Muted,
@@ -380,4 +380,18 @@ fun ImpactSummary(impact: Impact, title: String, onOpen: () -> Unit) {
             TextButton(onClick = onOpen) { Text("查看影响", fontSize = 12.sp) }
         }
     }
+}
+
+/**
+ * 交通方式的中文说法。
+ *
+ * 数据来自高德路径规划（route.py 选择）：步行/骑行更快时用更快的，
+ * 用户说过"不想多走路"就一律公交；estimate 表示接口失败退回直线估算。
+ */
+fun transportLabel(mode: String): String = when (mode) {
+    "walking" -> "步行"
+    "bicycling" -> "骑行"
+    "transit" -> "公交"
+    "estimate" -> "约"
+    else -> "通行"
 }

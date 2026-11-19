@@ -42,6 +42,10 @@ data class PlanEdge(
     val from: String,
     val to: String,
     val minGapMin: Int,
+    /** transit / walking / bicycling / estimate */
+    val travelMode: String = "",
+    val travelSource: String = "",
+    val travelDistanceM: Int = 0,
 )
 
 data class Plan(
@@ -339,6 +343,9 @@ object PlanJson {
                 from = item.text("from"),
                 to = item.text("to"),
                 minGapMin = item.optInt("minGapMin", 0),
+                travelMode = item.optString("travelMode", ""),
+                travelSource = item.optString("travelSource", ""),
+                travelDistanceM = item.optInt("travelDistanceM", 0),
             )
         }
         // 生成器把这些放在 generation 字段里；内置计划没有这一段，读成空即可

@@ -195,14 +195,23 @@ class Edge:
     dst: str
     type: str = "precedes"
     min_gap: int = 0
+    # 交通方式与耗时来源：transit / walking / bicycling / estimate
+    travel_mode: str = ""
+    travel_source: str = ""
+    travel_distance_m: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "from": self.src,
             "to": self.dst,
             "type": self.type,
             "minGapMin": self.min_gap,
         }
+        if self.travel_mode:
+            data["travelMode"] = self.travel_mode
+            data["travelSource"] = self.travel_source
+            data["travelDistanceM"] = self.travel_distance_m
+        return data
 
 
 TIME_EDGES = {"precedes", "requires"}
@@ -289,6 +298,9 @@ class Plan:
                         dst=edge["to"],
                         type=edge.get("type", "precedes"),
                         min_gap=int(edge.get("minGapMin", 0)),
+                        travel_mode=str(edge.get("travelMode") or ""),
+                        travel_source=str(edge.get("travelSource") or ""),
+                        travel_distance_m=int(edge.get("travelDistanceM") or 0),
                     )
                     for edge in raw.get("edges", [])
                 ],
