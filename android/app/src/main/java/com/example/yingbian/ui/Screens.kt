@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import com.example.yingbian.data.ActivityRow
 import com.example.yingbian.data.CheckinResult
 import com.example.yingbian.data.Impact
+import com.example.yingbian.data.LocateResult
 import com.example.yingbian.data.MemberInfo
 import com.example.yingbian.data.Plan
 import com.example.yingbian.data.PlanNode
@@ -70,6 +71,8 @@ fun PlanScreen(
     onCheckin: () -> Unit = {},
     onVote: () -> Unit = {},
     onActivity: () -> Unit = {},
+    onLocate: () -> Unit = {},
+    locateLoading: Boolean = false,
     memberCount: Int = 0,
     voteOpen: Boolean = false,
     weatherLocation: String = "行程所在地",
@@ -100,6 +103,8 @@ fun PlanScreen(
             voteOpen = voteOpen,
             onVote = onVote,
             onActivity = onActivity,
+            onLocate = onLocate,
+            locateLoading = locateLoading,
         )
         if (plan.understanding.isNotBlank()) {
             // 让用户一眼看到"AI 把你的话理解成了什么"，
@@ -309,6 +314,8 @@ private fun CollabBar(
     voteOpen: Boolean,
     onVote: () -> Unit,
     onActivity: () -> Unit,
+    onLocate: () -> Unit = {},
+    locateLoading: Boolean = false,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
@@ -325,12 +332,72 @@ private fun CollabBar(
                 color = Muted,
                 modifier = Modifier.weight(1f),
             )
-            TextButton(onClick = onActivity) { Text("协作记录", fontSize = 11.sp) }
+            TextButton(onClick = onLocate, enabled = !locateLoading) {
+                Text(if (locateLoading) "定位中…" else "定位", fontSize = 11.sp)
+            }
+            TextButton(onClick = onActivity) { Text("记录", fontSize = 11.sp) }
             TextButton(onClick = onVote) {
-                Text(if (voteOpen) "投票中…" else "发起投票", fontSize = 11.sp)
+                Text(if (voteOpen) "投票中…" else "投票", fontSize = 11.sp)
             }
         }
     }
+}
+
+/**
+ * 定位检查结果：先回答"你在哪、该在哪、落后多少"，再给改法。
+ */
+@Composable
+fun LocateDialog(
+    result: LocateResult,
+    onUseScheme: (RepairScheme) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (result.isBehind) "你落后了" else "定位检查") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text(result.message, fontSize = 12.sp, color = Ink)
+                if (result.driftMinutes > 0) {
+                    Text(
+                        text = "落后 " + result.driftMinutes + " 分钟",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = ConflictOrange,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
+                }
+                if (result.schemes.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Text("可以这样改：", fontSize = 11.sp, color = Muted)
+                    result.schemes.forEach { scheme ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = scheme.label,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = Ink,
+                                )
+                                Text(
+                                    text = "改 " + scheme.changedCount + " 处",
+                                    fontSize = 10.sp,
+                                    color = Muted,
+                                )
+                            }
+                            TextButton(onClick = { onUseScheme(scheme) }) {
+                                Text("采用", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+    )
 }
 
 @Composable

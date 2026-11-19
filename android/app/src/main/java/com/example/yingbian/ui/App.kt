@@ -69,6 +69,16 @@ fun YingBianRoot() {
     var newPlanOpen by remember { mutableStateOf(false) }
     var activityOpen by remember { mutableStateOf(false) }
 
+    /** 定位检查：拿当前位置问后端我现在该在哪，落后就给改法 */
+    suspend fun useMyLocationForLocate() {
+        val point = withContext(Dispatchers.IO) { locationHelper.lastKnown() }
+        if (point == null) {
+            Toast.makeText(context, "没取到定位，无法做定位检查", Toast.LENGTH_LONG).show()
+        } else {
+            controller.checkLocation(point.first, point.second)
+        }
+    }
+
     suspend fun refreshWeatherFromLocation() {
         val point = withContext(Dispatchers.IO) { locationHelper.lastKnown() }
         if (point == null) {
@@ -224,6 +234,8 @@ fun YingBianRoot() {
                                     }
                                 },
                                 onActivity = { activityOpen = true },
+                                onLocate = { scope.launch { useMyLocationForLocate() } },
+                                locateLoading = controller.locateLoading,
                                 memberCount = controller.members.size,
                                 voteOpen = controller.vote?.isOpen == true,
                             )
@@ -311,6 +323,19 @@ fun YingBianRoot() {
                 }
             },
             onDismiss = { newPlanOpen = false },
+        )
+    }
+
+    controller.locateResult?.let { result ->
+        LocateDialog(
+            result = result,
+            onUseScheme = { scheme ->
+                scope.launch {
+                    controller.applyLocateScheme(scheme)
+                    controller.clearLocateResult()
+                }
+            },
+            onDismiss = { controller.clearLocateResult() },
         )
     }
 
