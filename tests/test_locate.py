@@ -43,7 +43,7 @@ def fake_http(url: str) -> dict:
 def build_plan() -> Plan:
     with patch("yingbian.poi._throttle", lambda: None), patch(
         "yingbian.poi._http_json", side_effect=fake_http
-    ), patch.dict("os.environ", {"AMAP_KEY": "test"}):
+    ), patch.dict("os.environ", {"AMAP_KEY": "test", "YINGBIAN_OFFLINE_ROUTE": "1"}):
         from yingbian import poi
 
         poi._CACHE.clear()
@@ -102,7 +102,7 @@ class LocateTest(unittest.TestCase):
     def test_plan_without_coordinates(self):
         with patch("yingbian.poi._throttle", lambda: None), patch(
             "yingbian.poi._http_json", side_effect=fake_http
-        ), patch.dict("os.environ", {"AMAP_KEY": "test"}):
+        ), patch.dict("os.environ", {"AMAP_KEY": "test", "YINGBIAN_OFFLINE_ROUTE": "1"}):
             from yingbian import poi
 
             poi._CACHE.clear()

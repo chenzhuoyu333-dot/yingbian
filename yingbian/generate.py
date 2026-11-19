@@ -77,13 +77,13 @@ class Preferences:
     start_place: str = ""
     # 行程天数：1 = 当天往返，>1 会按天切开并补住宿节点
     days: int = 1
+    # "不想多走路"：不做长距离步行，公交挑步行最少的方案
+    avoid_walking: bool = False
     # 由 AI 从"人均 100 以内""想去评价好的"这类话里解析出来
     budget_per_person: int = 0      # 0 表示不限
     prefer_high_rating: bool = False
     # 住宿：用户指定的酒店名或区域；空表示待定
     lodging: str = ""
-    # "不想多走路"：不做长距离步行，公交挑步行最少的方案
-    avoid_walking: bool = False
 
 
 def _blocked(poi: Poi, avoid: list[str]) -> bool:

@@ -329,6 +329,12 @@ def _rule_preferences(text: str) -> dict:
     if days is not None:
         days = max(1, min(7, days))
 
+    # 不想多走路 → 交通一律按公共交通算
+    avoid_walking = any(
+        w in text
+        for w in ("不想多走", "少走路", "别走太多", "不想走", "腿脚不便", "坐车", "打车", "不要步行")
+    )
+
     prefer_rating = any(
         w in text for w in ("评分高", "评价好", "口碑好", "高分", "好吃的", "有名")
     ) or None
@@ -343,10 +349,10 @@ def _rule_preferences(text: str) -> dict:
         "pace": pace,
         "maxTransitMin": 45,
         "days": days,
+        "avoidWalking": avoid_walking,
         "budgetPerPerson": budget,
         "preferHighRating": prefer_rating,
         "lodging": lodging,
-        "avoidWalking": avoid_walking,
     }
 
 
@@ -411,6 +417,7 @@ _PREF_SYSTEM = """你是行程偏好解析器。把用户的中文需求解析�
   avoid: 字符串数组，用户说"不想/别去/不去"的东西；没有就输出 []
   pace: "relaxed" | "normal" | "packed" 或 null（"轻松/不想赶"→relaxed，"多去几个"→packed）
   maxTransitMin: 整数或 null
+  avoidWalking: true/false 或 null（"不想多走路/腿脚不便/尽量坐车"→true）
   days: 行程天数（整数 1~7）或 null（"3天2晚"→3，"两天"→2，"周末"→2）
   budgetPerPerson: 整数（人均预算上限，元）或 null（"人均100以内/预算200"）
   preferHighRating: true/false 或 null（"想去评价好的/评分高的/口碑好"）
@@ -479,11 +486,12 @@ def parse_preferences(text: str) -> tuple[dict, str]:
         except (TypeError, ValueError):
             merged["days"] = 1
 
-        merged["preferHighRating"] = bool(
-            merged.get("preferHighRating") or fixed.get("preferHighRating")
-        )
         merged["avoidWalking"] = bool(
             merged.get("avoidWalking") or fixed.get("avoidWalking")
+        )
+
+        merged["preferHighRating"] = bool(
+            merged.get("preferHighRating") or fixed.get("preferHighRating")
         )
         lodging_value = merged.get("lodging")
         merged["lodging"] = (

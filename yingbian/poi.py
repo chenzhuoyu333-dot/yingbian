@@ -393,11 +393,19 @@ _ROUTE_RETRY_AFTER = 0.0
 _ROUTE_FAILURES = 0
 
 
-def _route_mode(a: Poi, b: Poi) -> str:
-    """按距离选一个合理的默认方式：近的走路，远的打车，中间坐公交/地铁。"""
+def _route_mode(a: Poi, b: Poi, avoid_walking: bool = False) -> str:
+    """按距离与偏好选默认方式。
+
+    用户说过"不想多走路"就直接公交，不再考虑步行/骑行；
+    否则近的走路、稍近的骑车、远的打车，中间坐公交/地铁。
+    """
+    if avoid_walking:
+        return "transit"
     meters = distance_m(a, b)
-    if meters <= 1800:
+    if meters <= 600:
         return "walk"
+    if meters <= 1800:
+        return "bicycling"
     if meters >= 6000:
         return "driving"
     return "transit"
@@ -491,6 +499,7 @@ def route_plan(
     city: str,
     mode: str | None = None,
     transit_variant: str = "fastest",
+    avoid_walking: bool = False,
 ) -> dict:
     """
     调高德路径规划，返回一段路的交通方式、距离和预计分钟数。
@@ -502,7 +511,7 @@ def route_plan(
     global _ROUTE_RETRY_AFTER
     import time
 
-    chosen = mode or _route_mode(a, b)
+    chosen = mode or _route_mode(a, b, avoid_walking)
     if chosen not in {"walk", "bicycling", "transit", "driving"}:
         chosen = "transit"
     cache_key = f"{city}|{a.location}|{b.location}|{chosen}|{transit_variant}"

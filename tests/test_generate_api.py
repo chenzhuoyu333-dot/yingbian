@@ -41,7 +41,7 @@ def fake_http(url: str) -> dict:
 class GenerateApiTest(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
-        patch.dict(os.environ, {"AMAP_KEY": "test-key"}).start()
+        patch.dict(os.environ, {"AMAP_KEY": "test-key", "YINGBIAN_OFFLINE_ROUTE": "1"}).start()
         patch("yingbian.poi._throttle", lambda: None).start()
         patch("yingbian.poi._http_json", side_effect=fake_http).start()
         from yingbian import poi

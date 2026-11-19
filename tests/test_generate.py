@@ -71,7 +71,7 @@ def fake_http(url: str) -> dict:
 class GenerateTest(unittest.TestCase):
     def setUp(self):
         # 让 generate 认为 Key 已配置；并且关掉节流，测试才快
-        self.env = patch.dict(os.environ, {"AMAP_KEY": "test-key"})
+        self.env = patch.dict(os.environ, {"AMAP_KEY": "test-key", "YINGBIAN_OFFLINE_ROUTE": "1"})
         self.env.start()
         self.throttle = patch("yingbian.poi._throttle", lambda: None)
         self.throttle.start()
