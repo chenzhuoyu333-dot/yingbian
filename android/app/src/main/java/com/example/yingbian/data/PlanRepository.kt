@@ -48,6 +48,12 @@ interface PlanRepository {
     /** 删除自己生成的行程 */
     suspend fun deletePlan(planId: String)
 
+    /**
+     * 按当前位置判断是否落后于计划。
+     * now 传 "HH:mm" 可以在演示时模拟"现在是下午五点"；不传就用服务器当前时间。
+     */
+    suspend fun locate(lat: Double, lng: Double, now: String? = null): LocateResult
+
     // ── 多人协作 ──────────────────────────────────
     /** 加入行程（幂等），返回当前成员列表 */
     suspend fun join(): List<MemberInfo>
@@ -307,6 +313,9 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
 
     override suspend fun deletePlan(planId: String) = Unit
 
+    override suspend fun locate(lat: Double, lng: Double, now: String?): LocateResult =
+        throw IOException("离线模式无法做定位检查，请连上后端")
+
     override suspend fun reset(): Plan {
         history.clear()
         blockedMode = false
@@ -547,6 +556,15 @@ class RemotePlanRepository(
     override suspend fun openPlan(planId: String): Plan {
         this.planId = planId
         return loadPlan()
+    }
+
+    override suspend fun locate(lat: Double, lng: Double, now: String?): LocateResult {
+        val body = JSONObject()
+            .put("memberId", settings.memberId)
+            .put("lat", lat)
+            .put("lng", lng)
+        if (!now.isNullOrBlank()) body.put("now", now)
+        return PlanJson.parseLocate(request("POST", "/api/plan//locate", body))
     }
 
     override suspend fun deletePlan(planId: String) {

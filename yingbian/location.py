@@ -201,3 +201,106 @@ def checkin(
         "blockedNode": None if schemes else target.id,
         "message": message,
     }
+
+# ── 定位驱动的自动判断 ────────────────────────────────
+def _distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    from math import asin, cos, radians, sin, sqrt
+
+    r = 6371000.0
+    dlat = radians(lat2 - lat1)
+    dlng = radians(lng2 - lng1)
+    h = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlng / 2) ** 2
+    return 2 * r * asin(sqrt(h))
+
+
+def _node_point(node: Node) -> tuple[float, float] | None:
+    poi = getattr(node, "poi", None) or {}
+    lat, lng = poi.get("lat"), poi.get("lng")
+    if lat and lng:
+        return float(lat), float(lng)
+    return None
+
+
+NEAR_RADIUS_M = 1500        # 超过这个距离就认为不在任何计划点附近
+LATE_TOLERANCE_MIN = 10     # 落后 10 分钟以内不算晚
+
+
+def locate(plan: Plan, lat: float, lng: float, now_minutes: int) -> dict[str, Any]:
+    """根据当前位置和当前时间，判断你落后了吗，落后就给出改法。
+
+    场景：17:00 本该到下一个点，但你还在上一个点。
+      · 找离你最近的计划节点（要 1.5 公里内）
+      · 找此刻本该在的节点（第一个 start >= now 的）
+      · 如果你人还停在前面的节点，落后 = now - 本该到的节点的 start
+      · 落后超过 10 分钟，直接复用 checkin 的方案生成逻辑
+
+    不做持续定位、不上传轨迹：只在用户主动点一下时算一次。
+    """
+    located = [
+        (node, _node_point(node))
+        for node in plan.nodes
+        if not node.dropped and _node_point(node) is not None
+    ]
+    if not located:
+        return {
+            "status": "no_location_data",
+            "message": "这份行程没有地点坐标，无法用定位判断（内置示范计划没有坐标）",
+            "driftMinutes": 0,
+            "schemes": [],
+        }
+
+    node, point = min(
+        located, key=lambda item: _distance_m(lat, lng, item[1][0], item[1][1])
+    )
+    distance = int(_distance_m(lat, lng, point[0], point[1]))
+    if distance > NEAR_RADIUS_M:
+        return {
+            "status": "unknown",
+            "message": f"你离最近的计划点「{node.title}」还有 {distance} 米，先不判断" ,
+            "atNodeId": node.id,
+            "atNodeTitle": node.title,
+            "atDistanceM": distance,
+            "driftMinutes": 0,
+            "schemes": [],
+        }
+
+    # “此刻本该在”哪个点：计划里 start 已经过了的最后一个节点
+    passed = sorted(
+        (n for n in plan.nodes if not n.dropped and n.start <= now_minutes),
+        key=lambda n: n.start,
+    )
+    should = passed[-1] if passed else node
+
+    # 人还在更早的点上 → 落后 = 现在 - 本该到的那个点的开始时间
+    drift = 0
+    if should.id != node.id:
+        drift = max(0, now_minutes - should.start)
+
+    base = {
+        "atNodeId": node.id,
+        "atNodeTitle": node.title,
+        "atDistanceM": distance,
+        "shouldNodeId": should.id,
+        "shouldNodeTitle": should.title,
+        "shouldStart": should.start,
+        "nowMinutes": now_minutes,
+        "driftMinutes": drift,
+    }
+
+    if drift < LATE_TOLERANCE_MIN:
+        return {
+            **base,
+            "status": "on_track",
+            "message": f"按计划走：现在应该在「{should.title}」",
+            "schemes": [],
+        }
+
+    result = checkin(plan, should.id, drift, None)
+    return {
+        **base,
+        "status": "behind",
+        "message": f"你还在「{node.title}」，计划 {should.start // 60:02d}:{should.start % 60:02d} 就该到「{should.title}」，已落后 {drift} 分钟",
+        "impact": result.get("impact"),
+        "schemes": result.get("schemes", []),
+        "blockedNode": result.get("blockedNode"),
+    }

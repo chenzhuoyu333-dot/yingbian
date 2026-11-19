@@ -182,6 +182,21 @@ data class ActivityRow(
  * 生成行程的偏好。字段名与后端 /api/generate 的请求体一一对应。
  * 全部有默认值，界面上只需要改用户关心的几项。
  */
+
+/**
+ * 定位检查的结果：我现在在哪、计划该在哪、落后多少、能怎么改。
+ */
+data class LocateResult(
+    val status: String,          // on_track | behind | unknown | no_location_data
+    val message: String,
+    val atNodeTitle: String,
+    val shouldNodeTitle: String,
+    val driftMinutes: Int,
+    val schemes: List<RepairScheme>,
+) {
+    val isBehind: Boolean get() = status == "behind"
+}
+
 data class GeneratePrefs(
     val city: String = "杭州",
     val date: String = "2026-11-14",
@@ -511,6 +526,20 @@ object PlanJson {
             decidedBy = raw.optString("decidedBy", ""),
             remainingSec = raw.optInt("remainingSec", 0),
             defaultScheme = raw.optString("defaultScheme", "B"),
+        )
+    }
+
+
+    fun parseLocate(data: JSONObject): LocateResult {
+        // schemes 的结构和 repair 一致，直接复用解析
+        val schemes = runCatching { parseRepair(data).schemes }.getOrDefault(emptyList())
+        return LocateResult(
+            status = data.optString("status", "unknown"),
+            message = data.optString("message", ""),
+            atNodeTitle = data.optString("atNodeTitle", ""),
+            shouldNodeTitle = data.optString("shouldNodeTitle", ""),
+            driftMinutes = data.optInt("driftMinutes", 0),
+            schemes = schemes,
         )
     }
 

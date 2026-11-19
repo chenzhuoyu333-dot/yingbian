@@ -9,6 +9,7 @@ import com.example.yingbian.data.CheckinResult
 import com.example.yingbian.data.Impact
 import com.example.yingbian.data.DemoScenario
 import com.example.yingbian.data.GeneratePrefs
+import com.example.yingbian.data.LocateResult
 import com.example.yingbian.data.MemberInfo
 import com.example.yingbian.data.Plan
 import com.example.yingbian.data.PlanRepository
@@ -114,6 +115,12 @@ class PlanController(
     var remoteChanged by mutableStateOf(false)
         private set
 
+    /** 定位检查结果：我在哪、计划该在哪、落后多少、能怎么改 */
+    var locateResult by mutableStateOf<LocateResult?>(null)
+        private set
+    var locateLoading by mutableStateOf(false)
+        private set
+
     val memberName: String
         get() = settings?.memberName ?: "我"
 
@@ -175,6 +182,47 @@ class PlanController(
 
     fun clearRemoteChanged() {
         remoteChanged = false
+    }
+
+    /**
+     * 定位检查：拿当前位置问后端"我现在该在哪"。
+     * now 留空用服务器时间；演示时可以传 "17:00" 把场景演出来。
+     */
+    suspend fun checkLocation(lat: Double, lng: Double, now: String? = null) {
+        locateLoading = true
+        try {
+            locateResult = repo.locate(lat, lng, now)
+        } catch (exception: Exception) {
+            error = exception.message ?: "定位检查失败"
+        } finally {
+            locateLoading = false
+        }
+    }
+
+    fun clearLocateResult() {
+        locateResult = null
+    }
+
+    /** 采用定位检查给出的某个方案：直接打给后端并刷新界面 */
+    suspend fun applyLocateScheme(scheme: RepairScheme) {
+        val base = plan ?: return
+        loading = true
+        error = null
+        try {
+            val updated = repo.applyScheme(scheme)
+            plan = updated
+            planBeforeApply = base
+            lastScheme = scheme
+            notifications = buildNotifications(scheme, base)
+            notificationSelection = notifications.map { it.id }.toSet()
+            todos = emptyList()
+            todoDone = emptySet()
+            screen = AppScreen.Plan
+        } catch (exception: Exception) {
+            error = exception.message ?: "应用方案失败"
+        } finally {
+            loading = false
+        }
     }
 
     // ── 首页：我的计划 ─────────────────────────────
