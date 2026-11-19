@@ -2,9 +2,9 @@
 
 设计取舍（重要）：
   · 只做检索 + 分类，不做排序 —— 排序在 generate.py 里，那才是可解释的业务逻辑
-  · 通勤时间**不在这里调路径规划**：一次生成会用到二三十条边，逐个调接口既慢又吃配额。
-    generate.py 用直线距离 + 分速度估算，并标 confidence=low/source=estimate，
-    需要精确时再单独校准 —— 这也是"数据诚实"的一部分。
+  · 排序仍用直线距离估算（避免给每个候选点都调一次路径规划）。
+  · 最终排出来的每条边再调一次高德路径规划，拿到真实交通方式和预计时间；
+    接口失败时退回估算，并在 transport.source=estimate 里如实标明。
   · 所有网络访问只走 _http_json 一个出口，测试里 mock 它就完全不碰网络。
 
 配置（项目根目录 .env）：
@@ -383,3 +383,180 @@ def travel_minutes(a: Poi, b: Poi, mode: str = "transit") -> int:
         speed = 15 * 1000 / 60
         overhead = 10
     return max(5, int(round(meters * 1.2 / speed)) + overhead)
+
+
+# ── 高德路径规划：最终方案里"怎么走、多久" ───────────────
+_ROUTE_CACHE: dict[str, dict] = {}
+# 高德整体不可用（超时 / Key 无效 / 配额耗尽）时，本次生成不要每条边都再等 3 次重试
+_ROUTE_RETRY_AFTER = 0.0
+
+
+def _route_mode(a: Poi, b: Poi, avoid_walking: bool = False) -> str:
+    """按距离与偏好选默认方式。
+
+    用户说过"不想多走路"就直接公交，不再考虑步行/骑行；
+    否则近的走路、稍近的骑车、远的打车，中间坐公交/地铁。
+    """
+    if avoid_walking:
+        return "transit"
+    meters = distance_m(a, b)
+    if meters <= 600:
+        return "walk"
+    if meters <= 1800:
+        return "bicycling"
+    if meters >= 6000:
+        return "driving"
+    return "transit"
+
+
+def _distance_text(meters: int) -> str:
+    if meters <= 0:
+        return ""
+    if meters < 1000:
+        return f"{meters} 米"
+    return f"{meters / 1000:.1f} 公里"
+
+
+def _transit_label(transit: dict) -> str:
+    """把高德公交方案压成一句人话：地铁 1 号线 + 步行。"""
+    parts: list[str] = []
+    for segment in transit.get("segments") or []:
+        bus = segment.get("bus") or {}
+        for line in (bus.get("buslines") or [])[:1]:
+            name = str(line.get("name") or "").strip()
+            # "地铁1号线(湘湖--萧山国际机场)" → "地铁1号线"
+            name = name.split("(")[0].split("（")[0].strip()
+            if name and name not in parts:
+                parts.append(name)
+        walk = segment.get("walking") or {}
+        try:
+            walk_m = int(walk.get("distance") or 0)
+        except (TypeError, ValueError):
+            walk_m = 0
+        if walk_m >= 250 and "步行" not in parts:
+            parts.append("步行")
+    return " + ".join(parts[:3]) or "公交/地铁"
+
+
+def _estimated_route(a: Poi, b: Poi, mode: str) -> dict:
+    duration = travel_minutes(a, b)
+    label = {"walk": "步行", "driving": "驾车/打车", "transit": "公交/地铁"}.get(mode, "公交/地铁")
+    return {
+        "mode": mode,
+        "label": label,
+        "distanceM": int(round(distance_m(a, b))),
+        "durationMin": duration,
+        "source": "estimate",
+        "text": f"{label}估算 · 约 {duration} 分钟（地图暂不可用）",
+    }
+
+
+def route_plan(
+    a: Poi,
+    b: Poi,
+    city: str,
+    mode: str | None = None,
+    avoid_walking: bool = False,
+) -> dict:
+    """
+    调高德路径规划，返回一段路的交通方式、距离和预计分钟数。
+
+    这里只对**最终排进行程的边**调用，不对候选池里的每个点调用。
+    没有 Key、接口失败、返回没有路线时一律退回本地估算，并把来源写成
+    estimate —— 前端据此显示“估算”，不把假数据伪装成地图结果。
+    """
+    global _ROUTE_RETRY_AFTER
+    import time
+
+    chosen = mode or _route_mode(a, b, avoid_walking)
+    if chosen not in {"walk", "bicycling", "transit", "driving"}:
+        chosen = "transit"
+    cache_key = f"{city}|{a.location}|{b.location}|{chosen}"
+    if cache_key in _ROUTE_CACHE:
+        return dict(_ROUTE_CACHE[cache_key])
+
+    amap_key = key("AMAP_KEY")
+    if not amap_key:
+        return _estimated_route(a, b, chosen)
+    if time.time() < _ROUTE_RETRY_AFTER:
+        return _estimated_route(a, b, chosen)
+
+    base = {
+        "origin": a.location,
+        "destination": b.location,
+        "key": amap_key,
+    }
+    if chosen == "bicycling":
+        # 骑行是高德 v4 接口，返回结构和 v3 不同（data.paths）
+        bike_url = (
+            "https://restapi.amap.com/v4/direction/bicycling?"
+            + urllib.parse.urlencode(
+                {"origin": a.location, "destination": b.location, "key": amap_key}
+            )
+        )
+        try:
+            bike_payload = _get_with_retry(bike_url)
+            bike_paths = (bike_payload.get("data") or {}).get("paths") or []
+            if bike_paths:
+                bike_path = bike_paths[0]
+                bike_min = max(1, int(round(int(float(bike_path.get("duration") or 0)) / 60)))
+                bike_result = {
+                    "mode": "bicycling",
+                    "label": "骑行",
+                    "distanceM": int(float(bike_path.get("distance") or 0)),
+                    "durationMin": bike_min,
+                    "source": "amap",
+                    "text": f"骑行 · 约 {bike_min} 分钟",
+                }
+                _ROUTE_CACHE[cache_key] = dict(bike_result)
+                return bike_result
+        except Exception:
+            pass
+        return _estimated_route(a, b, "bicycling")
+
+    if chosen == "walk":
+        endpoint = "walking"
+    elif chosen == "driving":
+        endpoint = "driving"
+        base["strategy"] = "0"
+    else:
+        endpoint = "transit/integrated"
+        base.update({"city": city, "cityd": city, "strategy": "0"})
+
+    url = f"https://restapi.amap.com/v3/direction/{endpoint}?{urllib.parse.urlencode(base)}"
+    try:
+        payload = _get_with_retry(url)
+        if str(payload.get("status")) != "1":
+            _ROUTE_RETRY_AFTER = time.time() + 60
+            return _estimated_route(a, b, chosen)
+        route = payload.get("route") or {}
+
+        if chosen == "transit":
+            transits = route.get("transits") or []
+            if not transits:
+                return _estimated_route(a, b, chosen)
+            path = transits[0]
+            label = _transit_label(path)
+        else:
+            paths = route.get("paths") or []
+            if not paths:
+                return _estimated_route(a, b, chosen)
+            path = paths[0]
+            label = "步行" if chosen == "walk" else "驾车/打车"
+
+        duration_sec = int(float(path.get("duration") or 0))
+        distance = int(float(path.get("distance") or distance_m(a, b)))
+        duration = max(1, int(round(duration_sec / 60)))
+        result = {
+            "mode": chosen,
+            "label": label,
+            "distanceM": distance,
+            "durationMin": duration,
+            "source": "amap",
+            "text": f"{label} · 约 {duration} 分钟",
+        }
+        _ROUTE_CACHE[cache_key] = dict(result)
+        return result
+    except Exception:
+        _ROUTE_RETRY_AFTER = time.time() + 60
+        return _estimated_route(a, b, chosen)

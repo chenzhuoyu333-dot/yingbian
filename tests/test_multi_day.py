@@ -139,6 +139,28 @@ class MultiDayTest(unittest.TestCase):
         self.assertTrue(any(i.startswith("d1_") for i in ids))
         Plan.from_dict(plan)
 
+    def test_each_day_has_date_and_each_edge_has_transport(self):
+        plan = generate(
+            Preferences(
+                city="杭州",
+                date="2026-11-19",
+                interests=["景点", "咖啡"],
+                days=2,
+                max_transit_min=45,
+            )
+        )
+        dates = sorted({node["date"] for node in plan["nodes"]})
+        self.assertEqual(dates, ["2026-11-19", "2026-11-20"])
+        self.assertEqual(plan["endDate"], "2026-11-20")
+        self.assertEqual(plan["days"], 2)
+
+        for edge in plan["edges"]:
+            transport = edge.get("transport")
+            self.assertIsInstance(transport, dict, edge)
+            self.assertIn(transport["source"], ("amap", "estimate"))
+            self.assertGreater(transport["durationMin"], 0)
+            self.assertEqual(edge["minGapMin"], transport["durationMin"])
+
 
 if __name__ == "__main__":
     unittest.main()

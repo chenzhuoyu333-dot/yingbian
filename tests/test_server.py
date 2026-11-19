@@ -1,10 +1,12 @@
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from server import app as app_module
 from server.app import app
 from yingbian import load_plan
+from yingbian.repair import RepairResult
 
 
 RAIN = {"type": "rain", "from": "15:00", "to": "17:00", "prob": 0.7}
@@ -40,6 +42,76 @@ class ServerContractTest(unittest.TestCase):
         self.assertEqual(scheme["changedCount"], 2)
         self.assertEqual(scheme["keepRate"], 1.0)
         self.assertEqual([a["action"] for a in scheme["actions"]], ["replace", "drop"])
+
+    def test_repair_collapses_identical_a_b(self):
+        body = self.client.post(
+            f"/api/plan/{self.plan_id}/repair",
+            json={"event": RAIN},
+        ).json()
+        schemes = body["data"]["schemes"]
+        self.assertEqual(len(schemes), 1)
+        self.assertEqual(schemes[0]["id"], "A")
+        self.assertEqual(schemes[0]["label"], "两种偏好结果一致")
+
+    def test_repair_keeps_distinct_a_b(self):
+        base = load_plan("data/plan-demo.json")
+        app_module.PLANS = {base.plan_id: base.clone()}
+        app_module.VERSIONS = {base.plan_id: [base.clone()]}
+        body = self.client.post(
+            f"/api/plan/{base.plan_id}/repair",
+            json={"event": RAIN},
+        ).json()
+        self.assertEqual(
+            [scheme["id"] for scheme in body["data"]["schemes"]],
+            ["A", "B"],
+        )
+
+    def test_repair_keeps_usable_scheme_when_other_blocked(self):
+        base = load_plan()
+        blocked = RepairResult(
+            status="blocked",
+            scheme="A",
+            label="保时间",
+            actions=[],
+            blocked_node="n_sunset",
+            message="锁定节点被影响",
+            keep_rate=1.0,
+            changed_count=0,
+            plan=base.clone(),
+            elapsed_ms=0.0,
+        )
+        usable = RepairResult(
+            status="ok",
+            scheme="B",
+            label="保体验",
+            actions=[],
+            blocked_node=None,
+            message="",
+            keep_rate=1.0,
+            changed_count=0,
+            plan=base.clone(),
+            elapsed_ms=0.0,
+        )
+        with patch("server.app.repair", side_effect=[blocked, usable]):
+            body = self.client.post(
+                f"/api/plan/{self.plan_id}/repair",
+                json={"event": RAIN, "schemes": ["A", "B"]},
+            ).json()
+        self.assertEqual(body["data"]["status"], "ok")
+        self.assertEqual([scheme["id"] for scheme in body["data"]["schemes"]], ["B"])
+
+    def test_all_blocked_returns_one_blocked_response(self):
+        self.client.post(
+            "/api/debug/lock",
+            json={"planId": self.plan_id, "nodeId": "n_sunset", "confirmed": True},
+        )
+        body = self.client.post(
+            f"/api/plan/{self.plan_id}/repair",
+            json={"event": RAIN},
+        ).json()
+        self.assertEqual(body["data"]["status"], "blocked")
+        self.assertEqual(body["data"]["schemes"], [])
+        self.assertEqual(body["data"]["blockedNode"], "n_sunset")
 
     def test_apply_and_undo(self):
         repair_body = self.client.post(

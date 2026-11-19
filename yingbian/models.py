@@ -107,6 +107,8 @@ class Node:
     confidence: str = "high"
     place: str = ""
     contact: str = ""
+    # 多日行程里这个节点属于哪一天（YYYY-MM-DD）；旧计划没有这个字段
+    date: str = ""
     persons: list[str] = field(default_factory=list)
     sacrifice: str = ""
     dropped: bool = False
@@ -141,6 +143,7 @@ class Node:
             "confidence": self.confidence,
             "place": self.place,
             "contact": self.contact,
+            "date": self.date,
             "persons": list(self.persons),
             "sacrifice": self.sacrifice,
             # 来自高德的真实店面信息（评分/人均/营业时间/电话/招牌菜）与入选理由。
@@ -170,6 +173,7 @@ class Node:
                 confidence=raw.get("confidence", "high"),
                 place=raw.get("place", ""),
                 contact=raw.get("contact", ""),
+                date=raw.get("date", ""),
                 persons=list(raw.get("persons", [])),
                 sacrifice=raw.get("sacrifice", ""),
                 poi=dict(raw.get("poi") or {}) or None,
@@ -195,23 +199,17 @@ class Edge:
     dst: str
     type: str = "precedes"
     min_gap: int = 0
-    # 交通方式与耗时来源：transit / walking / bicycling / estimate
-    travel_mode: str = ""
-    travel_source: str = ""
-    travel_distance_m: int = 0
+    # 这段路怎么走：mode / label / distanceM / durationMin / source / text
+    transport: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        data = {
+        return {
             "from": self.src,
             "to": self.dst,
             "type": self.type,
             "minGapMin": self.min_gap,
+            "transport": dict(self.transport) if self.transport else None,
         }
-        if self.travel_mode:
-            data["travelMode"] = self.travel_mode
-            data["travelSource"] = self.travel_source
-            data["travelDistanceM"] = self.travel_distance_m
-        return data
 
 
 TIME_EDGES = {"precedes", "requires"}
@@ -226,6 +224,8 @@ class Plan:
     nodes: list[Node]
     edges: list[Edge]
     version: int = 1
+    end_date: str = ""
+    days: int = 1
 
     def node(self, node_id: str) -> Node:
         for node in self.nodes:
@@ -279,6 +279,8 @@ class Plan:
             "planId": self.plan_id,
             "title": self.title,
             "date": self.date,
+            "endDate": self.end_date,
+            "days": self.days,
             "version": self.version,
             "nodes": [node.to_dict() for node in self.nodes],
             "edges": [edge.to_dict() for edge in self.edges],
@@ -291,6 +293,8 @@ class Plan:
                 plan_id=raw["planId"],
                 title=raw["title"],
                 date=raw["date"],
+                end_date=raw.get("endDate", ""),
+                days=int(raw.get("days", 1)),
                 nodes=[Node.from_dict(item) for item in raw["nodes"]],
                 edges=[
                     Edge(
@@ -298,9 +302,7 @@ class Plan:
                         dst=edge["to"],
                         type=edge.get("type", "precedes"),
                         min_gap=int(edge.get("minGapMin", 0)),
-                        travel_mode=str(edge.get("travelMode") or ""),
-                        travel_source=str(edge.get("travelSource") or ""),
-                        travel_distance_m=int(edge.get("travelDistanceM") or 0),
+                        transport=dict(edge.get("transport") or {}) or None,
                     )
                     for edge in raw.get("edges", [])
                 ],

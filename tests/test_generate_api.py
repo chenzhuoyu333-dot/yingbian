@@ -88,6 +88,24 @@ class GenerateApiTest(unittest.TestCase):
         # 生成器必须自己说明"这些数据是怎么来的、哪里不确定"
         self.assertIn("高德", gen["note"])
 
+    def test_generate_accepts_start_date_and_returns_dated_transport(self):
+        res = self.client.post(
+            "/api/generate",
+            json={"city": "杭州", "startDate": "2026-11-19", "days": 1},
+        ).json()
+        self.assertTrue(res["ok"], res)
+        plan = res["data"]["plan"]
+        pid = plan["planId"]
+        try:
+            self.assertEqual(plan["date"], "2026-11-19")
+            self.assertEqual(plan["endDate"], "2026-11-19")
+            self.assertTrue(all(node["date"] == "2026-11-19" for node in plan["nodes"]))
+            transport = plan["edges"][0]["transport"]
+            self.assertIn(transport["source"], ("amap", "estimate"))
+            self.assertGreater(transport["durationMin"], 0)
+        finally:
+            self.client.delete(f"/api/plans/{pid}")
+
     def test_generate_without_key_reports_readable_error(self):
         with patch.dict(os.environ, {"AMAP_KEY": ""}):
             from yingbian import poi

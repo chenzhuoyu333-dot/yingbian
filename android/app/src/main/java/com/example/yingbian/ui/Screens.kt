@@ -50,11 +50,16 @@ import com.example.yingbian.data.Impact
 import com.example.yingbian.data.LocateResult
 import com.example.yingbian.data.MemberInfo
 import com.example.yingbian.data.Plan
+import com.example.yingbian.data.PlanEdge
 import com.example.yingbian.data.PlanNode
 import com.example.yingbian.data.PlanSummary
 import com.example.yingbian.data.RepairScheme
 import com.example.yingbian.data.VoteState
 import com.example.yingbian.data.Weather
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun PlanScreen(
@@ -120,24 +125,30 @@ fun PlanScreen(
             GenerateNotice(plan)
         }
         impact?.let { ImpactSummary(it, eventTitle, onImpact) }
+        val dayGroups = plan.nodes.groupBy { it.date.ifBlank { plan.date } }.toList()
         LazyColumn(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
         ) {
             item {
                 SectionHeader(
-                    title = "今日行程",
-                    subtitle = "${plan.nodes.size} 个节点 · 版本 ${plan.version}",
+                    title = if (dayGroups.size > 1) "多日行程" else "行程安排",
+                    subtitle = "${dayGroups.size} 天 · ${plan.nodes.size} 个节点 · 版本 ${plan.version}",
                 )
             }
-            itemsIndexed(plan.nodes, key = { _, node -> node.id }) { index, node ->
-                NodeCard(
-                    node = node,
-                    state = impact?.stateOf(node.id) ?: "ok",
-                    shift = impact?.shiftOf(node.id) ?: 0,
-                )
-                if (index < plan.nodes.lastIndex) {
-                    EdgeLine(gapBetween(plan, node, plan.nodes[index + 1]), modeBetween(plan, node, plan.nodes[index + 1]))
+            dayGroups.forEachIndexed { dayIndex, (date, dayNodes) ->
+                item(key = "day-header-$date") {
+                    DayHeader(date, dayIndex + 1, dayNodes.size)
+                }
+                itemsIndexed(dayNodes, key = { _, node -> node.id }) { index, node ->
+                    NodeCard(
+                        node = node,
+                        state = impact?.stateOf(node.id) ?: "ok",
+                        shift = impact?.shiftOf(node.id) ?: 0,
+                    )
+                    if (index < dayNodes.lastIndex) {
+                        EdgeLine(edgeBetween(plan, node, dayNodes[index + 1]))
+                    }
                 }
             }
             item { Spacer(Modifier.height(8.dp)) }
@@ -155,10 +166,38 @@ fun PlanScreen(
     }
 }
 
-private fun modeBetween(plan: Plan, from: PlanNode, to: PlanNode): String =
-    plan.edges.firstOrNull { it.from == from.id && it.to == to.id }?.travelMode ?: ""
-private fun gapBetween(plan: Plan, from: PlanNode, to: PlanNode): Int =
-    plan.edges.firstOrNull { it.from == from.id && it.to == to.id }?.minGapMin ?: 0
+private fun edgeBetween(plan: Plan, from: PlanNode, to: PlanNode): PlanEdge? =
+    plan.edges.firstOrNull { it.from == from.id && it.to == to.id }
+
+@Composable
+private fun DayHeader(date: String, dayIndex: Int, stopCount: Int) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = formatIsoDate(date),
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            color = Ink,
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "第 $dayIndex 天 · $stopCount 站",
+            fontSize = 11.sp,
+            color = Muted,
+        )
+    }
+}
+
+private fun formatIsoDate(value: String): String {
+    if (value.isBlank()) return "日期未定"
+    return runCatching {
+        val parser = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).apply { isLenient = false }
+        val raw = parser.parse(value) ?: return@runCatching value
+        SimpleDateFormat("M 月 d 日 EEEE", Locale.CHINA).format(raw)
+    }.getOrDefault(value)
+}
 
 @Composable
 private fun WeatherChip(weather: Weather, onClick: () -> Unit) {
@@ -1248,10 +1287,15 @@ fun HomeScreen(
 fun NewPlanDialog(
     busy: Boolean,
     error: String?,
-    onGenerate: (String) -> Unit,
+    onGenerate: (String, String, Int?) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var text by remember { mutableStateOf("") }
+    var startDate by remember { mutableStateOf(todayIso()) }
+    // 0 = 按文字里说的天数；用户点 1~5 天时以用户点选为准
+    var selectedDays by remember { mutableStateOf(0) }
+    val endDate = if (selectedDays > 0) isoAfterDays(startDate, selectedDays) else null
+    val validStart = isoAfterDays(startDate, 1) != null
     val samples = listOf(
         "想拍照、不想早起，别爬山，轻松一点",
         "下午两点半出发，想看博物馆和咖啡店，人均 40 以内",
@@ -1268,6 +1312,60 @@ fun NewPlanDialog(
                     fontSize = 11.sp,
                     color = Muted,
                 )
+                Spacer(Modifier.height(10.dp))
+
+                Surface(
+                    color = SoftBlue,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("日期", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Ink)
+                        Spacer(Modifier.height(6.dp))
+                        OutlinedTextField(
+                            value = startDate,
+                            onValueChange = { startDate = it },
+                            label = { Text("开始日期（YYYY-MM-DD）") },
+                            singleLine = true,
+                            isError = !validStart,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text("玩几天", fontSize = 11.sp, color = Muted)
+                        Spacer(Modifier.height(4.dp))
+                        listOf(
+                            listOf(0 to "按文字", 1 to "1 天", 2 to "2 天"),
+                            listOf(3 to "3 天", 4 to "4 天", 5 to "5 天"),
+                        ).forEach { options ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                options.forEach { (days, label) ->
+                                    val picked = selectedDays == days
+                                    OutlinedButton(
+                                        onClick = { selectedDays = days },
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            fontSize = 11.sp,
+                                            fontWeight = if (picked) FontWeight.Bold else FontWeight.Normal,
+                                            color = if (picked) Ink else Muted,
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(4.dp))
+                        }
+                        Text(
+                            text = when {
+                                !validStart -> "日期格式不对，请写成 2026-11-19"
+                                endDate != null -> "结束：${formatIsoDate(endDate)}"
+                                else -> "结束日期按文字里说的天数自动计算"
+                            },
+                            fontSize = 11.sp,
+                            color = if (validStart) Muted else ConflictOrange,
+                        )
+                    }
+                }
                 Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = text,
@@ -1293,13 +1391,35 @@ fun NewPlanDialog(
             }
         },
         confirmButton = {
-            Button(onClick = { onGenerate(text.trim()) }, enabled = !busy && text.isNotBlank()) {
+            Button(
+                onClick = {
+                    onGenerate(
+                        text.trim(),
+                        startDate.trim(),
+                        selectedDays.takeIf { it > 0 },
+                    )
+                },
+                enabled = !busy && text.isNotBlank() && validStart,
+            ) {
                 Text(if (busy) "生成中…" else "生成行程")
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }
+
+private fun todayIso(): String =
+    SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date())
+
+private fun isoAfterDays(start: String, days: Int): String? = runCatching {
+    val parser = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).apply { isLenient = false }
+    val date = parser.parse(start.trim()) ?: return null
+    val calendar = Calendar.getInstance().apply {
+        time = date
+        add(Calendar.DAY_OF_MONTH, days - 1)
+    }
+    SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(calendar.time)
+}.getOrNull()
 
 @Composable
 private fun DebugAction(label: String, onClick: () -> Unit) {

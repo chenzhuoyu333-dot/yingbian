@@ -29,7 +29,7 @@ from yingbian.generate import Preferences, generate
 from yingbian.location import checkin as location_checkin
 from yingbian.location import locate as location_locate
 from yingbian.models import Plan, PlanError, parse_time
-from yingbian.repair import apply_actions
+from yingbian.repair import RepairResult, apply_actions
 from yingbian.weather import fetch_weather
 
 
@@ -209,9 +209,11 @@ def post_generate(body: dict = Body(...)):
     按偏好生成一份行程，并直接注册进计划表 —— 生成完就能发事件、求方案、应用、撤销。
 
     请求体（全部可选，缺省用默认值）：
-      {"city":"杭州","date":"2026-11-14","startTime":"09:30","endTime":"20:00",
+      {"city":"杭州","startDate":"2026-11-19","days":2,"startTime":"09:30","endTime":"20:00",
        "interests":["景点","公园","咖啡"],"mustVisit":["清河坊历史文化特色街区"],
        "avoid":["爬山"],"pace":"normal","maxTransitMin":45,"startPlace":""}
+
+    日期也可以传 date / endDate；date 是 startDate 的兼容别名。
 
     也可以只给一句话，由 AI 解析成偏好：
       {"text":"想拍照、不想早起、别爬山"}
@@ -230,9 +232,23 @@ def post_generate(body: dict = Body(...)):
         interpretation = {"text": text, "source": source}
 
     try:
+        trip_date = str(
+            body.get("startDate")
+            or body.get("date")
+            or datetime.now().strftime("%Y-%m-%d")
+        )
+        trip_days = int(body.get("days") or 1)
+        end_text = str(body.get("endDate") or "").strip()
+        if end_text:
+            try:
+                start_dt = datetime.strptime(trip_date, "%Y-%m-%d")
+                end_dt = datetime.strptime(end_text, "%Y-%m-%d")
+                trip_days = max(1, (end_dt - start_dt).days + 1)
+            except ValueError:
+                pass
         prefs = Preferences(
             city=str(body.get("city") or "杭州"),
-            date=str(body.get("date") or "2026-11-14"),
+            date=trip_date,
             start_time=str(body.get("startTime") or "09:30"),
             end_time=str(body.get("endTime") or "20:00"),
             interests=list(body.get("interests") or []),
@@ -243,7 +259,7 @@ def post_generate(body: dict = Body(...)):
             start_place=str(body.get("startPlace") or ""),
             budget_per_person=int(body.get("budgetPerPerson") or 0),
             prefer_high_rating=bool(body.get("preferHighRating") or False),
-            days=int(body.get("days") or 1),
+            days=trip_days,
             avoid_walking=bool(body.get("avoidWalking") or False),
         )
         raw_plan = generate(prefs)
@@ -549,6 +565,42 @@ def _describe_event(body: dict) -> str:
     return kind or "未知变化"
 
 
+def _repair_signature(result: RepairResult) -> tuple:
+    """用最终计划判断两套方案是否真的相同，而不是只比方案名字。"""
+    return (
+        result.status,
+        tuple(
+            (node.id, node.title, node.start, node.end, node.dropped, node.place, node.indoor)
+            for node in result.plan.nodes
+        ),
+    )
+
+
+def _dedupe_repairs(results: list[RepairResult]) -> list[RepairResult]:
+    if len(results) < 2:
+        return results
+    unique: list[RepairResult] = []
+    seen: dict[tuple, RepairResult] = {}
+    for result in results:
+        signature = _repair_signature(result)
+        first = seen.get(signature)
+        if first is None:
+            seen[signature] = result
+            unique.append(result)
+        else:
+            first.label = "两种偏好结果一致"
+    return unique
+
+
+def _select_repairs(results: list[RepairResult]) -> tuple[list[RepairResult], RepairResult | None]:
+    """只把 blocked 当成阻断；如果还有可用方案，就不要把它一起藏掉。"""
+    usable = [item for item in results if item.status != "blocked"]
+    if usable:
+        return _dedupe_repairs(usable), None
+    blocked = next((item for item in results if item.status == "blocked"), None)
+    return [], blocked
+
+
 @app.post("/api/plan/{plan_id}/repair")
 def post_repair(plan_id: str, body: dict = Body(...)):
     plan = _plan_or_404(plan_id)
@@ -558,8 +610,8 @@ def post_repair(plan_id: str, body: dict = Body(...)):
     event = Event.from_dict(raw_event)
     schemes = body.get("schemes") or ["A", "B"]
     results = [repair(plan, event, key) for key in schemes]
-    blocked = next((item for item in results if item.status == "blocked"), None)
-    if blocked is not None:
+    usable, blocked = _select_repairs(results)
+    if not usable and blocked is not None:
         return _ok({
             "status": "blocked",
             "schemes": [],
@@ -568,7 +620,7 @@ def post_repair(plan_id: str, body: dict = Body(...)):
         })
     return _ok({
         "status": "ok",
-        "schemes": [item.to_dict() for item in results],
+        "schemes": [item.to_dict() for item in usable],
         "blockedNode": None,
         "message": "",
     })

@@ -247,12 +247,12 @@ class PlanController(
      * 一句话新建行程：把文字交给后端，AI 解析成偏好，再用高德真实地点排成计划。
      * 成功后直接进这份新行程的行程页。
      */
-    suspend fun createFromText(text: String) {
+    suspend fun createFromText(text: String, startDate: String? = null, days: Int? = null) {
         loading = true
         error = null
         generateNote = null
         try {
-            plan = repo.generateFromText(text)
+            plan = repo.generateFromText(text, startDate, days)
             impact = null
             schemes = emptyList()
             selectedSchemeId = null
@@ -268,7 +268,7 @@ class PlanController(
             screen = AppScreen.Plan
             weather = runCatching { repo.planWeather() }.getOrNull()
             weather?.place?.takeIf { it.isNotBlank() }?.let { weatherLocation = it }
-            generateNote = "已生成 ${plan?.nodes?.size ?: 0} 个节点"
+            generateNote = "已生成 ${plan?.days ?: days ?: 1} 天、${plan?.nodes?.size ?: 0} 个节点"
             loadHome()
         } catch (exception: Exception) {
             error = exception.message ?: "生成失败"

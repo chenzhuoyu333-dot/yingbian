@@ -29,6 +29,8 @@ data class PlanNode(
     val contact: String,
     val persons: List<String>,
     val sacrifice: String,
+    /** 多日行程里这个节点属于哪一天（YYYY-MM-DD）；旧计划为空 */
+    val date: String = "",
 ) {
     val durationMin: Int
         get() = (parseMinutes(end) - parseMinutes(start)).coerceAtLeast(0)
@@ -38,20 +40,34 @@ data class PlanNode(
     fun endWithShift(shift: Int): String = formatMinutes(parseMinutes(end) + shift)
 }
 
+/**
+ * 从上一站到这一站怎么走。source=amap 是高德路径规划，
+ * source=estimate 表示接口不可用、使用了本地估算，界面必须如实区分。
+ */
+data class PlanTransport(
+    val mode: String,
+    val label: String,
+    val distanceM: Int,
+    val durationMin: Int,
+    val source: String,
+    val text: String,
+) {
+    val fromMap: Boolean get() = source == "amap"
+}
+
 data class PlanEdge(
     val from: String,
     val to: String,
     val minGapMin: Int,
-    /** transit / walking / bicycling / estimate */
-    val travelMode: String = "",
-    val travelSource: String = "",
-    val travelDistanceM: Int = 0,
+    val transport: PlanTransport? = null,
 )
 
 data class Plan(
     val planId: String,
     val title: String,
     val date: String,
+    val endDate: String = "",
+    val days: Int = 1,
     val version: Int,
     val nodes: List<PlanNode>,
     val edges: List<PlanEdge>,
@@ -275,6 +291,8 @@ fun applyActions(plan: Plan, actions: List<RepairAction>): Plan {
 }
 
 object PlanJson {
+    private const val SAME_RESULT_LABEL = "两种偏好结果一致"
+
     private fun JSONObject.text(key: String): String = if (isNull(key)) "" else optString(key, "")
 
     private fun JSONObject.stringMap(): Map<String, String> {
@@ -336,16 +354,25 @@ object PlanJson {
                     (0 until array.length()).map { index -> array.optString(index) }
                 }.orEmpty(),
                 sacrifice = item.text("sacrifice"),
+                date = item.text("date"),
             )
         }
         val edges = raw.optJSONArray("edges")?.objects().orEmpty().map { item ->
+            val transport = item.optJSONObject("transport")?.let { t ->
+                PlanTransport(
+                    mode = t.text("mode"),
+                    label = t.text("label"),
+                    distanceM = t.optInt("distanceM", 0),
+                    durationMin = t.optInt("durationMin", 0),
+                    source = t.text("source").ifBlank { "estimate" },
+                    text = t.text("text"),
+                )
+            }
             PlanEdge(
                 from = item.text("from"),
                 to = item.text("to"),
                 minGapMin = item.optInt("minGapMin", 0),
-                travelMode = item.optString("travelMode", ""),
-                travelSource = item.optString("travelSource", ""),
-                travelDistanceM = item.optInt("travelDistanceM", 0),
+                transport = transport,
             )
         }
         // 生成器把这些放在 generation 字段里；内置计划没有这一段，读成空即可
@@ -358,6 +385,8 @@ object PlanJson {
             planId = raw.text("planId"),
             title = raw.text("title"),
             date = raw.text("date"),
+            endDate = raw.text("endDate"),
+            days = raw.optInt("days", generation?.optInt("days", 1) ?: 1).coerceAtLeast(1),
             version = raw.optInt("version", 1),
             nodes = nodes,
             edges = edges,
@@ -379,7 +408,7 @@ object PlanJson {
     fun parseRepair(data: JSONObject): RepairResult {
         val schemes = data.optJSONArray("schemes")?.objects().orEmpty().map { item ->
             parseScheme(item)
-        }
+        }.let(::dedupeSchemes)
         return RepairResult(
             status = data.text("status").ifBlank { "ok" },
             schemes = schemes,
@@ -405,6 +434,31 @@ object PlanJson {
         sacrifice = item.text("sacrifice"),
     )
 
+    private fun schemeSignature(scheme: RepairScheme): String =
+        scheme.actions.joinToString("|") { action ->
+            val payload = action.payload.toSortedMap().entries.joinToString(",") { (key, value) ->
+                "$key=$value"
+            }
+            "${action.nodeId}:${action.action}:$payload"
+        }
+
+    private fun dedupeSchemes(schemes: List<RepairScheme>): List<RepairScheme> {
+        if (schemes.size < 2) return schemes
+        val unique = mutableListOf<RepairScheme>()
+        val seen = mutableMapOf<String, Int>()
+        schemes.forEach { scheme ->
+            val signature = schemeSignature(scheme)
+            val index = seen[signature]
+            if (index == null) {
+                seen[signature] = unique.size
+                unique += scheme
+            } else {
+                unique[index] = unique[index].copy(label = SAME_RESULT_LABEL)
+            }
+        }
+        return unique
+    }
+
     fun parseCheckin(data: JSONObject): CheckinResult = CheckinResult(
         nodeId = data.text("nodeId"),
         nodeTitle = data.text("nodeTitle"),
@@ -412,7 +466,9 @@ object PlanJson {
         minutes = data.optInt("minutes", 0),
         message = data.text("message"),
         impact = data.optJSONObject("impact")?.let { parseImpact(it) },
-        schemes = data.optJSONArray("schemes")?.objects().orEmpty().map { parseScheme(it) },
+        schemes = data.optJSONArray("schemes")?.objects().orEmpty()
+            .map { parseScheme(it) }
+            .let(::dedupeSchemes),
         blockedNode = data.text("blockedNode").ifBlank { null },
     )
 
