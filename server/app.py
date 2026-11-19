@@ -27,7 +27,8 @@ from yingbian.ai import (
 from yingbian.collab import SCHEMES, STATE as COLLAB
 from yingbian.generate import Preferences, generate
 from yingbian.location import checkin as location_checkin
-from yingbian.models import Plan, PlanError
+from yingbian.location import locate as location_locate
+from yingbian.models import Plan, PlanError, parse_time
 from yingbian.repair import apply_actions
 from yingbian.weather import fetch_weather
 
@@ -459,6 +460,50 @@ def post_event(plan_id: str, body: dict = Body(...)):
     event = Event.from_dict(body)
     report = propagate(plan, event)
     return _ok(report.to_dict())
+
+
+@app.post("/api/plan/{plan_id}/locate")
+def post_locate(plan_id: str, body: dict = Body(...)):
+    """按当前位置 + 当前时间判断是否落后，落后就给改法。
+
+    场景：17:00 本该到下一个点，人还在上一个点。
+    位置只在这一刻用一次，不做持续定位、不留轨迹。
+
+    请求：{lat, lng, now?: "HH:mm"}
+      now 可选 —— 演示时可以传"假时间"，把"下午五点"这个场景演出来。
+    """
+    plan = _plan_or_404(plan_id)
+    if plan is None:
+        return _error("NOT_FOUND", "计划不存在", 404)
+
+    try:
+        lat = float(body.get("lat"))
+        lng = float(body.get("lng"))
+    except (TypeError, ValueError):
+        return _error("BAD_POSITION", "需要 lat 和 lng")
+
+    now_text = str(body.get("now") or "").strip()
+    if now_text:
+        try:
+            now_minutes = parse_time(now_text)
+        except Exception:
+            return _error("BAD_TIME", "now 需要 HH:mm 格式")
+    else:
+        stamp = datetime.now()
+        now_minutes = stamp.hour * 60 + stamp.minute
+
+    try:
+        result = location_locate(plan, lat, lng, now_minutes)
+    except Exception as exc:
+        return _error("LOCATE_FAILED", str(exc))
+
+    member = COLLAB.member(plan_id, str(body.get("memberId") or "").strip())
+    if member is not None and result.get("status") == "behind":
+        COLLAB.record(
+            plan_id, member.id, member.name,
+            f"{member.name} 定位检查：落后 {result.get('driftMinutes')} 分钟（在「{result.get('atNodeTitle')}」）",
+        )
+    return _ok(result)
 
 
 @app.post("/api/plan/{plan_id}/checkin")
