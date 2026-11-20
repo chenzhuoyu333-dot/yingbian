@@ -69,6 +69,12 @@ fun YingBianRoot() {
     var newPlanOpen by remember { mutableStateOf(false) }
     var activityOpen by remember { mutableStateOf(false) }
 
+    /** 打开"新建行程"整屏，并顺手把省市清单拉回来 */
+    suspend fun openNewPlanPage() {
+        controller.openScreen(AppScreen.NewPlan)
+        controller.loadRegions()
+    }
+
     /** 定位检查：拿当前位置问后端我现在该在哪，落后就给改法 */
     suspend fun useMyLocationForLocate() {
         val point = withContext(Dispatchers.IO) { locationHelper.lastKnown() }
@@ -130,6 +136,7 @@ fun YingBianRoot() {
                         Text(
                             text = when (controller.screen) {
                                 AppScreen.Home -> "我的计划"
+                                AppScreen.NewPlan -> "新建行程"
                                 AppScreen.Plan -> controller.plan?.title ?: "应变"
                                 AppScreen.Scheme -> "两套方案对比"
                                 AppScreen.Notify -> "通知预览"
@@ -139,7 +146,7 @@ fun YingBianRoot() {
                             fontWeight = FontWeight.Bold,
                         )
                         // 首页不再显示日期：日期在每张卡片上已经有了，标题下再挂一个纯属重复
-                        if (controller.screen != AppScreen.Home) {
+                        if (controller.screen != AppScreen.Home && controller.screen != AppScreen.NewPlan) {
                             Text(
                                 text = controller.plan?.let { plan ->
                                     if (plan.endDate.isNotBlank() && plan.endDate != plan.date) {
@@ -156,7 +163,7 @@ fun YingBianRoot() {
                 },
                 actions = {
                     // 只有一个入口：加号 → 输入一句话生成行程
-                    IconButton(onClick = { newPlanOpen = true }) {
+                    IconButton(onClick = { scope.launch { openNewPlanPage() } }) {
                         Icon(Icons.Default.Add, contentDescription = "新建行程")
                     }
                     if ((controller.plan?.version ?: 1) > 1) {
@@ -172,7 +179,7 @@ fun YingBianRoot() {
         },
         bottomBar = {
             NavigationBar {
-                AppScreen.entries.forEach { screen ->
+                AppScreen.entries.filter { it != AppScreen.NewPlan }.forEach { screen ->
                     NavigationBarItem(
                         selected = controller.screen == screen,
                         onClick = { controller.openScreen(screen) },
@@ -200,7 +207,7 @@ fun YingBianRoot() {
                         plans = controller.homePlans,
                         loading = controller.homeLoading,
                         onOpen = { id -> scope.launch { controller.openPlan(id) } },
-                        onCreate = { newPlanOpen = true },
+                        onCreate = { scope.launch { openNewPlanPage() } },
                         onDelete = { id -> scope.launch { controller.removePlan(id) } },
                     )
 
@@ -210,6 +217,22 @@ fun YingBianRoot() {
                         when (controller.screen) {
                             // 首页在上面的分支已经处理掉了；这里兜底防止万一
                             AppScreen.Home -> LoadingScreen()
+
+                            AppScreen.NewPlan -> NewPlanScreen(
+                                regions = controller.regions,
+                                busy = controller.loading,
+                                error = controller.error,
+                                onCreate = { city, start, end, text ->
+                                    scope.launch {
+                                        controller.createTrip(city, start, end, text)
+                                        val note = controller.generateNote
+                                        if (!note.isNullOrBlank()) {
+                                            Toast.makeText(context, note, Toast.LENGTH_SHORT).show()
+                                            controller.clearGenerateNote()
+                                        }
+                                    }
+                                },
+                            )
 
                             AppScreen.Plan -> PlanScreen(
                                 plan = plan,
@@ -421,6 +444,7 @@ fun YingBianRoot() {
 
 private fun screenIcon(screen: AppScreen): ImageVector = when (screen) {
     AppScreen.Home -> Icons.Default.Menu
+    AppScreen.NewPlan -> Icons.Default.Add
     AppScreen.Plan -> Icons.Default.Home
     AppScreen.Scheme -> Icons.Default.List
     AppScreen.Notify -> Icons.Default.Notifications

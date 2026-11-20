@@ -45,6 +45,8 @@ interface PlanRepository {
     suspend fun generateFromText(
         text: String,
         startDate: String? = null,
+        endDate: String? = null,
+        city: String? = null,
         days: Int? = null,
         lodging: String = "",
         avoidWalking: Boolean = false,
@@ -53,6 +55,9 @@ interface PlanRepository {
     suspend fun openPlan(planId: String): Plan
     /** 删除自己生成的行程 */
     suspend fun deletePlan(planId: String)
+
+    /** 省 → 市清单，新建行程时选目的地用 */
+    suspend fun regions(): List<Province>
 
     /**
      * 按当前位置判断是否落后于计划。
@@ -315,6 +320,8 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
     override suspend fun generateFromText(
         text: String,
         startDate: String?,
+        endDate: String?,
+        city: String?,
         days: Int?,
         lodging: String,
         avoidWalking: Boolean,
@@ -324,6 +331,8 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
     override suspend fun openPlan(planId: String): Plan = loadPlan()
 
     override suspend fun deletePlan(planId: String) = Unit
+
+    override suspend fun regions(): List<Province> = emptyList()
 
     override suspend fun locate(lat: Double, lng: Double, now: String?): LocateResult =
         throw IOException("离线模式无法做定位检查，请连上后端")
@@ -553,6 +562,8 @@ class RemotePlanRepository(
     override suspend fun generateFromText(
         text: String,
         startDate: String?,
+        endDate: String?,
+        city: String?,
         days: Int?,
         lodging: String,
         avoidWalking: Boolean,
@@ -561,6 +572,8 @@ class RemotePlanRepository(
         if (!startDate.isNullOrBlank()) {
             body.put("startDate", startDate).put("date", startDate)
         }
+        if (!endDate.isNullOrBlank()) body.put("endDate", endDate)
+        if (!city.isNullOrBlank()) body.put("city", city)
         if (days != null) body.put("days", days)
         if (lodging.isNotBlank()) body.put("lodging", lodging)
         if (avoidWalking) body.put("avoidWalking", true)
@@ -577,6 +590,9 @@ class RemotePlanRepository(
         this.planId = planId
         return loadPlan()
     }
+
+    override suspend fun regions(): List<Province> =
+        PlanJson.parseRegions(request("GET", "/api/regions"))
 
     override suspend fun locate(lat: Double, lng: Double, now: String?): LocateResult {
         val body = JSONObject()

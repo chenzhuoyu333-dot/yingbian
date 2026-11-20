@@ -203,6 +203,12 @@ data class LocateResult(
     val isBehind: Boolean get() = status == "behind"
 }
 
+/** 省 → 市，用于新建行程时选目的地 */
+data class Province(
+    val name: String,
+    val cities: List<String>,
+)
+
 data class GeneratePrefs(
     val city: String = "杭州",
     val date: String = "2026-11-14",
@@ -551,6 +557,14 @@ object PlanJson {
             schemes = schemes,
         )
     }
+
+    fun parseRegions(data: JSONObject): List<Province> =
+        data.optJSONArray("provinces")?.objects().orEmpty().map { item ->
+            Province(
+                name = item.text("name"),
+                cities = item.optJSONArray("cities")?.strings().orEmpty(),
+            )
+        }
 
     fun parsePlans(data: JSONObject): List<PlanSummary> =
         data.optJSONArray("plans")?.objects().orEmpty().map { item ->
