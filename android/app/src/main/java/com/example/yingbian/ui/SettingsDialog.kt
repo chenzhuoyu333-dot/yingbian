@@ -1,6 +1,7 @@
 package com.example.yingbian.ui
 
 import androidx.compose.foundation.layout.Column
+import com.example.yingbian.data.ServerDiscovery
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -100,6 +101,27 @@ fun SettingsDialog(
                         },
                     ) {
                         Text(if (testing) "测试中…" else "测试连接", fontSize = 13.sp)
+                    }
+                    TextButton(
+                        enabled = !mock && !testing,
+                        onClick = {
+                            testing = true
+                            result = "正在扫描同网段…"
+                            scope.launch {
+                                val found = ServerDiscovery.find()
+                                if (found != null) {
+                                    base = found
+                                    result = "找到服务器：" + found.toString()
+                                    resultOk = true
+                                } else {
+                                    result = "没找到，检查后端是否运行、是否同一 Wi-Fi"
+                                    resultOk = false
+                                }
+                                testing = false
+                            }
+                        },
+                    ) {
+                        Text(if (testing) "扫描中…" else "自动寻找", fontSize = 13.sp)
                     }
                     TextButton(
                         onClick = {
