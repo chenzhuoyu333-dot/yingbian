@@ -30,6 +30,7 @@ from yingbian.location import checkin as location_checkin
 from yingbian.location import locate as location_locate
 from yingbian.models import Plan, PlanError, parse_time
 from yingbian.regions import load_regions
+from yingbian.patrol import patrol as run_patrol
 from yingbian.repair import RepairResult, apply_actions
 from yingbian.weather import fetch_weather
 
@@ -497,6 +498,41 @@ def post_event(plan_id: str, body: dict = Body(...)):
     event = Event.from_dict(body)
     report = propagate(plan, event)
     return _ok(report.to_dict())
+
+
+@app.get("/api/plan/{plan_id}/patrol")
+def get_patrol(
+    plan_id: str,
+    now: str = Query(default=""),
+    lat: float | None = Query(default=None),
+    lng: float | None = Query(default=None),
+):
+    """主动巡检：不等用户开口，先发现"该改计划了"。
+
+    返回提醒清单（落后 / 天气 / 临近最晚进入 / 没有缓冲），
+    每条都带 nodeId 和 severity，前端据此决定打扰力度。
+
+    纯确定性判断，不调模型 —— 所以可以在 App 里每隔一段时间调一次。
+    """
+    plan = _plan_or_404(plan_id)
+    if plan is None:
+        return _error("NOT_FOUND", "计划不存在", 404)
+
+    text = (now or "").strip()
+    if text:
+        try:
+            now_minutes = parse_time(text)
+        except Exception:
+            return _error("BAD_TIME", "now 需要 HH:mm 格式")
+    else:
+        stamp = datetime.now()
+        now_minutes = stamp.hour * 60 + stamp.minute
+
+    try:
+        result = run_patrol(plan, now_minutes, lat, lng)
+    except Exception as exc:
+        return _error("PATROL_FAILED", str(exc))
+    return _ok(result)
 
 
 @app.post("/api/plan/{plan_id}/locate")

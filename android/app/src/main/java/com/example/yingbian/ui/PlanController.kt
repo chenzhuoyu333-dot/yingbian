@@ -14,6 +14,7 @@ import com.example.yingbian.data.MemberInfo
 import com.example.yingbian.data.Plan
 import com.example.yingbian.data.PlanRepository
 import com.example.yingbian.data.PlanSummary
+import com.example.yingbian.data.PatrolResult
 import com.example.yingbian.data.Province
 import com.example.yingbian.data.RepairAction
 import com.example.yingbian.data.RepairScheme
@@ -117,6 +118,13 @@ class PlanController(
     var remoteChanged by mutableStateOf(false)
         private set
 
+    /** 管家巡检结果：不用你问，它自己发现了什么 */
+    var patrolResult by mutableStateOf<PatrolResult?>(null)
+        private set
+    var patrolDismissed by mutableStateOf(false)
+        private set
+    private var patrolTick = 0
+
     /** 定位检查结果：我在哪、计划该在哪、落后多少、能怎么改 */
     var locateResult by mutableStateOf<LocateResult?>(null)
         private set
@@ -152,6 +160,13 @@ class PlanController(
             }
             runCatching { vote = repo.voteState() }
             runCatching { activityRows = repo.activity() }
+
+            // 巡检比轮询慢：每 20 次轮询（约 60 秒）看一眼就够了，
+            // 免得每 3 秒都去请求一次天气和路径
+            patrolTick += 1
+            if (patrolTick % 20 == 0) {
+                runCatching { runPatrol() }
+            }
         }
     }
 
@@ -203,6 +218,25 @@ class PlanController(
 
     fun clearLocateResult() {
         locateResult = null
+    }
+
+    /**
+     * 主动巡检：不打扰地跑一遍，只有真有事才在界面上提示。
+     * 界面上"知道了"之后本轮不再打扰（patrolDismissed），
+     * 但下一次真正的变化仍会重新提醒。
+     */
+    suspend fun runPatrol() {
+        if (plan == null) return
+        runCatching { repo.patrol() }
+            .onSuccess { result ->
+                val changed = result.summary != patrolResult?.summary
+                patrolResult = result
+                if (changed) patrolDismissed = false
+            }
+    }
+
+    fun dismissPatrol() {
+        patrolDismissed = true
     }
 
     /** 采用定位检查给出的某个方案：直接打给后端并刷新界面 */
@@ -432,6 +466,22 @@ class PlanController(
             } else {
                 error = exception.message ?: "载入失败"
             }
+        } finally {
+            loading = false
+        }
+    }
+
+    /** 把"来不及了/落后"变成一次延后事件，让引擎给出改法 */
+    suspend fun reportDelay(nodeId: String, minutes: Int) {
+        if (plan == null || nodeId.isBlank()) return
+        loading = true
+        error = null
+        eventTitle = "「" + nodeId + "」延后 " + minutes + " 分钟"
+        try {
+            impact = repo.sendDelay(nodeId, minutes)
+            showImpact = true
+        } catch (exception: Exception) {
+            error = exception.message ?: "重算失败"
         } finally {
             loading = false
         }

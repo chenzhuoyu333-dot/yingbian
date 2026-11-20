@@ -203,6 +203,24 @@ data class LocateResult(
     val isBehind: Boolean get() = status == "behind"
 }
 
+/** 一条管家提醒 */
+data class PatrolAlert(
+    val kind: String,       // behind | weather | closing | tight
+    val title: String,
+    val detail: String,
+    val nodeId: String,
+    val severity: String,   // info | warn | urgent
+    val action: String,
+)
+
+/** 巡检结果：要不要打扰用户，为什么 */
+data class PatrolResult(
+    val needsAttention: Boolean,
+    val severity: String,
+    val summary: String,
+    val alerts: List<PatrolAlert>,
+)
+
 /** 省 → 市，用于新建行程时选目的地 */
 data class Province(
     val name: String,
@@ -557,6 +575,23 @@ object PlanJson {
             schemes = schemes,
         )
     }
+
+    fun parsePatrol(data: JSONObject): PatrolResult =
+        PatrolResult(
+            needsAttention = data.optBoolean("needsAttention", false),
+            severity = data.optString("severity", "none"),
+            summary = data.optString("summary", ""),
+            alerts = data.optJSONArray("alerts")?.objects().orEmpty().map { item ->
+                PatrolAlert(
+                    kind = item.optString("kind", ""),
+                    title = item.optString("title", ""),
+                    detail = item.optString("detail", ""),
+                    nodeId = item.optString("nodeId", ""),
+                    severity = item.optString("severity", "info"),
+                    action = item.optString("action", ""),
+                )
+            },
+        )
 
     fun parseRegions(data: JSONObject): List<Province> =
         data.optJSONArray("provinces")?.objects().orEmpty().map { item ->

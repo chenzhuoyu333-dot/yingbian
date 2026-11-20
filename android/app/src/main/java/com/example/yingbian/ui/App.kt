@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import com.example.yingbian.data.ApiConfig
 import com.example.yingbian.data.ApiSettings
 import com.example.yingbian.data.LocationHelper
+import com.example.yingbian.data.PatrolAlert
 import com.example.yingbian.data.createRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -68,6 +69,22 @@ fun YingBianRoot() {
     var voteOpen by remember { mutableStateOf(false) }
     var newPlanOpen by remember { mutableStateOf(false) }
     var activityOpen by remember { mutableStateOf(false) }
+    var patrolOpen by remember { mutableStateOf(false) }
+
+    /** 把一条管家提醒映射成既有的变化处理流程 */
+    fun handlePatrolAlert(alert: PatrolAlert) {
+        scope.launch {
+            when (alert.kind) {
+                // 天气：直接走"报告变化：下雨"
+                "weather" -> controller.simulateRain()
+                // 来不及了 / 落后：按该节点报一个延后事件，让引擎算方案
+                "closing", "behind" -> {
+                    controller.reportDelay(alert.nodeId, 30)
+                }
+                else -> Unit
+            }
+        }
+    }
 
     /** 打开"新建行程"整屏，并顺手把省市清单拉回来 */
     suspend fun openNewPlanPage() {
@@ -270,6 +287,10 @@ fun YingBianRoot() {
                                 onActivity = { activityOpen = true },
                                 onLocate = { scope.launch { useMyLocationForLocate() } },
                                 locateLoading = controller.locateLoading,
+                                patrol = controller.patrolResult,
+                                patrolDismissed = controller.patrolDismissed,
+                                onOpenPatrol = { patrolOpen = true },
+                                onDismissPatrol = { controller.dismissPatrol() },
                                 memberCount = controller.members.size,
                                 voteOpen = controller.vote?.isOpen == true,
                             )
@@ -394,6 +415,19 @@ fun YingBianRoot() {
             members = controller.members,
             onDismiss = { activityOpen = false },
         )
+    }
+
+    if (patrolOpen) {
+        controller.patrolResult?.let { result ->
+            PatrolDialog(
+                result = result,
+                onHandle = { alert ->
+                    patrolOpen = false
+                    handlePatrolAlert(alert)
+                },
+                onDismiss = { patrolOpen = false },
+            )
+        }
     }
 
     if (settingsOpen) {

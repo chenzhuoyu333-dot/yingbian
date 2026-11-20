@@ -23,6 +23,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DateRangePicker
 import androidx.compose.material3.rememberDateRangePickerState
+import com.example.yingbian.data.PatrolAlert
+import com.example.yingbian.data.PatrolResult
 import com.example.yingbian.data.Province
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -85,6 +87,10 @@ fun PlanScreen(
     onActivity: () -> Unit = {},
     onLocate: () -> Unit = {},
     locateLoading: Boolean = false,
+    patrol: PatrolResult? = null,
+    patrolDismissed: Boolean = false,
+    onOpenPatrol: () -> Unit = {},
+    onDismissPatrol: () -> Unit = {},
     memberCount: Int = 0,
     voteOpen: Boolean = false,
     weatherLocation: String = "行程所在地",
@@ -118,6 +124,17 @@ fun PlanScreen(
             onLocate = onLocate,
             locateLoading = locateLoading,
         )
+        // 管家提醒：只有真有事才出现，用户可以点"知道了"收起
+        patrol?.let { result ->
+            if (result.needsAttention && !patrolDismissed) {
+                ButlerNotice(
+                    result = result,
+                    onOpen = onOpenPatrol,
+                    onDismiss = onDismissPatrol,
+                )
+            }
+        }
+
         if (plan.understanding.isNotBlank()) {
             // 让用户一眼看到"AI 把你的话理解成了什么"，
             // 而不是对着一份看不懂的行程发愣
@@ -1829,4 +1846,84 @@ private fun DebugAction(label: String, onClick: () -> Unit) {
     TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Text(label, fontSize = 13.sp, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Start)
     }
+}
+
+/**
+ * 管家提醒：产品最核心的一屏。
+ *
+ * 别人做的是"你发现不对 → 你去改"，
+ * 这里做的是"它先发现 → 它告诉你 → 一键改"。
+ * 只有真有事才出现，可以"知道了"收起。
+ */
+@Composable
+fun ButlerNotice(
+    result: PatrolResult,
+    onOpen: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val urgent = result.severity == "urgent"
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+        color = if (urgent) Color(0xFFFFF1E6) else Color(0xFFEFF6FF),
+        shape = RoundedCornerShape(14.dp),
+        onClick = onOpen,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = if (urgent) "管家提醒" else "提醒",
+                    fontSize = 10.sp,
+                    color = if (urgent) ConflictOrange else Muted,
+                )
+                Text(
+                    text = result.summary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Ink,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
+            }
+            TextButton(onClick = onDismiss) { Text("知道了", fontSize = 11.sp) }
+        }
+    }
+}
+
+/** 提醒详情：每条都能直接去处理 */
+@Composable
+fun PatrolDialog(
+    result: PatrolResult,
+    onHandle: (PatrolAlert) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("管家发现") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                result.alerts.forEach { alert ->
+                    Column(modifier = Modifier.padding(vertical = 6.dp)) {
+                        Text(
+                            text = alert.title,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (alert.severity == "urgent") ConflictOrange else Ink,
+                        )
+                        Text(alert.detail, fontSize = 11.sp, color = Muted)
+                        if (alert.action.isNotBlank()) {
+                            TextButton(
+                                onClick = { onHandle(alert) },
+                                contentPadding = PaddingValues(0.dp),
+                            ) {
+                                Text(alert.action + " >", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("先不管") } },
+    )
 }

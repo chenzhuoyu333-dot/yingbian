@@ -15,6 +15,9 @@ interface PlanRepository {
     /** 按偏好生成一份新行程（后端 /api/generate） */
     suspend fun generate(prefs: GeneratePrefs): Plan
     suspend fun sendEvent(scenario: DemoScenario = DemoScenario.RAIN): Impact
+
+    /** 某个节点延后若干分钟（管家的"来不及了/落后"提醒走这条路） */
+    suspend fun sendDelay(nodeId: String, minutes: Int): Impact
     suspend fun repair(scenario: DemoScenario = DemoScenario.RAIN): RepairResult
     /** 主动到达打卡；晚到时后端返回影响和可执行方案，不共享实时轨迹。 */
     suspend fun checkin(
@@ -61,6 +64,9 @@ interface PlanRepository {
 
     /** 省 → 市清单，新建行程时选目的地用 */
     suspend fun regions(): List<Province>
+
+    /** 主动巡检：不等用户点，先发现该改计划了 */
+    suspend fun patrol(now: String? = null, lat: Double? = null, lng: Double? = null): PatrolResult
 
     /**
      * 按当前位置判断是否落后于计划。
@@ -120,6 +126,14 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
         )
         current = loaded
         return loaded
+    }
+
+
+    override suspend fun sendDelay(nodeId: String, minutes: Int): Impact {
+        // 离线演示：没有后端算延后，用内置事件的影响顶上，
+        // 界面上仍能看到"影响 → 方案"的完整流程
+        delay(300)
+        return PlanJson.parseImpact(readAsset("event-rain-T1.json").getJSONObject("data"))
     }
 
     override suspend fun sendEvent(scenario: DemoScenario): Impact {
@@ -340,6 +354,9 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
 
     override suspend fun regions(): List<Province> = emptyList()
 
+    override suspend fun patrol(now: String?, lat: Double?, lng: Double?): PatrolResult =
+        PatrolResult(needsAttention = false, severity = "none", summary = "", alerts = emptyList())
+
     override suspend fun locate(lat: Double, lng: Double, now: String?): LocateResult =
         throw IOException("离线模式无法做定位检查，请连上后端")
 
@@ -451,6 +468,15 @@ class RemotePlanRepository(
         planVersion = raw.optInt("version", 1)
         savePlan(raw)
         return PlanJson.parsePlan(raw)
+    }
+
+    override suspend fun sendDelay(nodeId: String, minutes: Int): Impact {
+        val body = JSONObject()
+            .put("type", "delay")
+            .put("nodeId", nodeId)
+            .put("minutes", minutes)
+            .put("label", "比计划晚 " + minutes + " 分钟")
+        return PlanJson.parseImpact(request("POST", "/api/plan/$planId/event", body))
     }
 
     override suspend fun sendEvent(scenario: DemoScenario): Impact =
@@ -606,6 +632,15 @@ class RemotePlanRepository(
 
     override suspend fun regions(): List<Province> =
         PlanJson.parseRegions(request("GET", "/api/regions"))
+
+    override suspend fun patrol(now: String?, lat: Double?, lng: Double?): PatrolResult {
+        val query = buildString {
+            append("/api/plan/").append(planId).append("/patrol?")
+            if (!now.isNullOrBlank()) append("now=").append(now).append("&")
+            if (lat != null && lng != null) append("lat=").append(lat).append("&lng=").append(lng)
+        }
+        return PlanJson.parsePatrol(request("GET", query.trimEnd('&', '?')))
+    }
 
     override suspend fun locate(lat: Double, lng: Double, now: String?): LocateResult {
         val body = JSONObject()
