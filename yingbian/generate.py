@@ -75,6 +75,9 @@ class Preferences:
     pace: str = "normal"
     max_transit_min: int = 45
     start_place: str = ""
+    # 出发点坐标（用户在新建页"用当前定位"时传进来）
+    start_lat: float = 0.0
+    start_lng: float = 0.0
     # 行程天数：1 = 当天往返，>1 会按天切开并补住宿节点
     days: int = 1
     # "不想多走路"：不做长距离步行，公交挑步行最少的方案
@@ -93,6 +96,18 @@ def _blocked(poi: Poi, avoid: list[str]) -> bool:
 
 def _pick_origin(prefs: Preferences, candidates: list[Poi]) -> Poi:
     """起点：优先按用户给的起点名检索，否则用候选池的地理中心造一个虚拟起点"""
+    # 优先用坐标（最准，且不需要检索）
+    if prefs.start_lat and prefs.start_lng:
+        return Poi(
+            id="poi_origin",
+            name=prefs.start_place or "我的位置",
+            category="sight",
+            indoor=False,
+            lng=prefs.start_lng,
+            lat=prefs.start_lat,
+            stay_min=0,
+        )
+
     if prefs.start_place:
         found = find_by_name(prefs.city, prefs.start_place)
         if found:
@@ -106,7 +121,9 @@ def _pick_origin(prefs: Preferences, candidates: list[Poi]) -> Poi:
 
     return Poi(
         id="poi_origin",
-        name=prefs.start_place or f"{prefs.city}市中心",
+        # 不谎称"市中心"：用户没指定出发点，就老实叫"出发点"，
+        # 免得他以为系统知道他从哪出发
+        name=prefs.start_place or "出发点",
         category="sight",
         indoor=True,
         lng=lng,

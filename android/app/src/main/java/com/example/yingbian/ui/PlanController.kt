@@ -260,6 +260,9 @@ class PlanController(
         startDate: String,
         endDate: String,
         text: String,
+        startPlace: String = "",
+        startLat: Double? = null,
+        startLng: Double? = null,
     ) {
         loading = true
         error = null
@@ -270,6 +273,9 @@ class PlanController(
                 startDate = startDate,
                 endDate = endDate,
                 city = city,
+                startPlace = startPlace.ifBlank { null },
+                startLat = startLat,
+                startLng = startLng,
             )
             impact = null
             schemes = emptyList()

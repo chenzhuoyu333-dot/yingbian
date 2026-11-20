@@ -222,9 +222,14 @@ fun YingBianRoot() {
                                 regions = controller.regions,
                                 busy = controller.loading,
                                 error = controller.error,
-                                onCreate = { city, start, end, text ->
+                                onLocate = {
+                                    withContext(Dispatchers.IO) { locationHelper.lastKnown() }
+                                },
+                                onCreate = { city, start, end, text, place, lat, lng ->
                                     scope.launch {
-                                        controller.createTrip(city, start, end, text)
+                                        controller.createTrip(
+                                            city, start, end, text, place, lat, lng,
+                                        )
                                         val note = controller.generateNote
                                         if (!note.isNullOrBlank()) {
                                             Toast.makeText(context, note, Toast.LENGTH_SHORT).show()

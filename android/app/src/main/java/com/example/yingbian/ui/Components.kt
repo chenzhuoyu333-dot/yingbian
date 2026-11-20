@@ -184,7 +184,6 @@ fun NodeCard(node: PlanNode, state: String, shift: Int) {
                     } else {
                         listOf(
                             node.place,
-                            if (node.indoor) "室内" else "室外",
                             "${node.durationMin} 分钟",
                         ).filter { it.isNotBlank() }.joinToString(" · ")
                     },

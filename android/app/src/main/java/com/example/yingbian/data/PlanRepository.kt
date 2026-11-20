@@ -50,6 +50,9 @@ interface PlanRepository {
         days: Int? = null,
         lodging: String = "",
         avoidWalking: Boolean = false,
+        startPlace: String? = null,
+        startLat: Double? = null,
+        startLng: Double? = null,
     ): Plan
     /** 切换到某份已有行程 */
     suspend fun openPlan(planId: String): Plan
@@ -325,6 +328,9 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
         days: Int?,
         lodging: String,
         avoidWalking: Boolean,
+        startPlace: String?,
+        startLat: Double?,
+        startLng: Double?,
     ): Plan =
         throw IOException("离线模式无法按文字生成，请连上后端")
 
@@ -567,6 +573,9 @@ class RemotePlanRepository(
         days: Int?,
         lodging: String,
         avoidWalking: Boolean,
+        startPlace: String?,
+        startLat: Double?,
+        startLng: Double?,
     ): Plan {
         val body = JSONObject().put("text", text)
         if (!startDate.isNullOrBlank()) {
@@ -574,6 +583,10 @@ class RemotePlanRepository(
         }
         if (!endDate.isNullOrBlank()) body.put("endDate", endDate)
         if (!city.isNullOrBlank()) body.put("city", city)
+        if (!startPlace.isNullOrBlank()) body.put("startPlace", startPlace)
+        if (startLat != null && startLng != null) {
+            body.put("startLat", startLat).put("startLng", startLng)
+        }
         if (days != null) body.put("days", days)
         if (lodging.isNotBlank()) body.put("lodging", lodging)
         if (avoidWalking) body.put("avoidWalking", true)

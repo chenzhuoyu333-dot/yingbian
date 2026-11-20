@@ -41,6 +41,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -321,12 +323,26 @@ fun NewPlanScreen(
     regions: List<Province>,
     busy: Boolean,
     error: String?,
-    onCreate: (city: String, startDate: String, endDate: String, text: String) -> Unit,
+    onCreate: (
+        city: String,
+        startDate: String,
+        endDate: String,
+        text: String,
+        startPlace: String,
+        startLat: Double?,
+        startLng: Double?,
+    ) -> Unit,
+    onLocate: suspend () -> Pair<Double, Double>? = { null },
 ) {
     var city by remember { mutableStateOf("") }
     var startDate by remember { mutableStateOf("") }
     var endDate by remember { mutableStateOf("") }
     var text by remember { mutableStateOf("") }
+    var startPlace by remember { mutableStateOf("") }
+    var startLat by remember { mutableStateOf<Double?>(null) }
+    var startLng by remember { mutableStateOf<Double?>(null) }
+    var locating by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
     var regionOpen by remember { mutableStateOf(false) }
     var dateOpen by remember { mutableStateOf(false) }
 
@@ -400,6 +416,53 @@ fun NewPlanScreen(
         }
 
         Spacer(Modifier.height(22.dp))
+        Text("从哪儿出发？", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = startPlace,
+            onValueChange = {
+                startPlace = it
+                startLat = null
+                startLng = null
+            },
+            placeholder = { Text("填一个起点，比如「西湖文化广场」", fontSize = 12.sp) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        locating = true
+                        // onLocate 是 suspend：必须在协程里调
+                        val point = try {
+                            onLocate()
+                        } finally {
+                            locating = false
+                        }
+                        if (point != null) {
+                            startLat = point.first
+                            startLng = point.second
+                            startPlace = "我的位置"
+                        }
+                    }
+                },
+                enabled = !locating,
+            ) {
+                Text(if (locating) "定位中…" else "用当前定位", fontSize = 12.sp)
+            }
+            Spacer(Modifier.width(10.dp))
+            if (startLat != null) {
+                Text("已用当前定位", fontSize = 11.sp, color = OkGreen)
+            } else if (startPlace.isNotBlank()) {
+                Text("从「" + startPlace + "」出发", fontSize = 11.sp, color = Muted)
+            } else {
+                Text("不填就从市区默认位置开始", fontSize = 11.sp, color = Muted)
+            }
+        }
+
+        Spacer(Modifier.height(22.dp))
         Text("说说你想怎么玩", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(
@@ -417,7 +480,7 @@ fun NewPlanScreen(
 
         Spacer(Modifier.height(24.dp))
         Button(
-            onClick = { onCreate(city, startDate, endDate, text) },
+            onClick = { onCreate(city, startDate, endDate, text, startPlace, startLat, startLng) },
             enabled = !busy && city.isNotBlank() && startDate.isNotBlank() && endDate.isNotBlank(),
             modifier = Modifier.fillMaxWidth().height(48.dp),
         ) {
@@ -1283,7 +1346,7 @@ fun ImpactSheet(
 }
 
 private fun impactReason(node: PlanNode, state: String): String = when (state) {
-    "at_risk" -> if (!node.indoor) "室外，降雨概率 70%" else "受上游变化影响"
+    "at_risk" -> if (!node.indoor) "受降雨影响（降雨概率 70%）" else "受上游变化影响"
     "invalid" -> node.windowLatest?.let { "最晚 $it 开始，当前时间装不下" } ?: "已取消或临时关闭"
     "conflict" -> "你锁定了这个节点，需要你确认"
     else -> "正常"

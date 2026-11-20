@@ -50,7 +50,8 @@ _STAY_MIN = {
 }
 
 # 兴趣词 → 高德检索关键词（用户说"古镇"就搜"古镇"）
-DEFAULT_INTERESTS = ["景点", "公园", "博物馆", "咖啡"]
+# 默认只放观光类。以前这里带"咖啡"，导致用户什么也没说也会被排进三家咖啡店。
+DEFAULT_INTERESTS = ["景点", "公园", "博物馆"]
 
 # 用户嘴里的"兴趣"不都是能拿去搜 POI 的关键词：
 #   "拍照""夜景"是风格诉求，拿去做 keywords 搜不出像样的地点，
@@ -88,7 +89,7 @@ def expand_interests(interests: list[str]) -> list[str]:
             words.extend(mapped)
 
     if not words:
-        words = ["景点", "公园", "博物馆", "咖啡"]
+        words = list(DEFAULT_INTERESTS)
     # 去重但保序
     seen: set[str] = set()
     unique = [w for w in words if not (w in seen or seen.add(w))]

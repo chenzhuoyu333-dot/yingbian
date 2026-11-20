@@ -271,7 +271,10 @@ def _rule_preferences(text: str) -> dict:
     # 少走路：影响交通方式和选点紧凑度
     avoid_walking = any(
         w in text
-        for w in ("不想多走路", "少走路", "不想走路", "别走太多", "走不动", "腿脚不便", "不想走太多")
+        for w in (
+            "不想多走路", "少走路", "不想走路", "别走太多", "走不动", "腿脚不便",
+            "不想走太多", "不想走", "不要步行", "尽量坐车", "多坐车",
+        )
     )
 
     # 时间：显式 HH:mm 优先，其次"下午/早上/不想早起"这类口头说法
@@ -328,12 +331,6 @@ def _rule_preferences(text: str) -> dict:
         days = 2
     if days is not None:
         days = max(1, min(7, days))
-
-    # 不想多走路 → 交通一律按公共交通算
-    avoid_walking = any(
-        w in text
-        for w in ("不想多走", "少走路", "别走太多", "不想走", "腿脚不便", "坐车", "打车", "不要步行")
-    )
 
     prefer_rating = any(
         w in text for w in ("评分高", "评价好", "口碑好", "高分", "好吃的", "有名")
@@ -417,7 +414,6 @@ _PREF_SYSTEM = """你是行程偏好解析器。把用户的中文需求解析�
   avoid: 字符串数组，用户说"不想/别去/不去"的东西；没有就输出 []
   pace: "relaxed" | "normal" | "packed" 或 null（"轻松/不想赶"→relaxed，"多去几个"→packed）
   maxTransitMin: 整数或 null
-  avoidWalking: true/false 或 null（"不想多走路/腿脚不便/尽量坐车"→true）
   days: 行程天数（整数 1~7）或 null（"3天2晚"→3，"两天"→2，"周末"→2）
   budgetPerPerson: 整数（人均预算上限，元）或 null（"人均100以内/预算200"）
   preferHighRating: true/false 或 null（"想去评价好的/评分高的/口碑好"）
