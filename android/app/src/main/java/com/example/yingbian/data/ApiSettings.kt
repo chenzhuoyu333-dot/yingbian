@@ -22,6 +22,17 @@ class ApiSettings(context: Context) {
     private val prefs =
         context.applicationContext.getSharedPreferences("yingbian_api", Context.MODE_PRIVATE)
 
+    /** 记住连成功过的地址，下次自动寻找先试这些（快很多） */
+    var lastKnownBases: List<String>
+        get() = prefs.getString(KEY_KNOWN, "")
+            ?.split("|")
+            ?.filter { it.isNotBlank() }
+            .orEmpty()
+        set(value) {
+            val merged = (value + lastKnownBases).distinct().take(5)
+            prefs.edit().putString(KEY_KNOWN, merged.joinToString("|")).apply()
+        }
+
     var baseUrl: String
         get() = prefs.getString(KEY_BASE, null)?.takeIf { it.isNotBlank() } ?: ApiConfig.defaultBase
         set(value) = prefs.edit().putString(KEY_BASE, normalize(value)).apply()
@@ -65,6 +76,7 @@ class ApiSettings(context: Context) {
     }
 
     private companion object {
+        private const val KEY_KNOWN = "known_bases"
         const val KEY_BASE = "base_url"
         const val KEY_MOCK = "use_mock"
         const val KEY_MEMBER_ID = "member_id"

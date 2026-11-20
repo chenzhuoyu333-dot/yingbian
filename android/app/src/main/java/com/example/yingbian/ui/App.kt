@@ -50,6 +50,7 @@ import com.example.yingbian.data.ApiConfig
 import com.example.yingbian.data.ApiSettings
 import com.example.yingbian.data.LocationHelper
 import com.example.yingbian.data.PatrolAlert
+import com.example.yingbian.data.ServerDiscovery
 import com.example.yingbian.data.createRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -138,6 +139,22 @@ fun YingBianRoot() {
         controller.loadHome()
         controller.load()
         controller.joinTrip()
+
+        // 启动自愈：连不上就自己找后端（校园网 / 热点 / 任何 Wi-Fi 都试）
+        if (!settings.useMock && controller.error != null) {
+            val found = withContext(Dispatchers.IO) {
+                ServerDiscovery.find(known = settings.lastKnownBases)
+            }
+            if (found != null) {
+                settings.baseUrl = found
+                settings.lastKnownBases = listOf(found)
+                Toast.makeText(context, "已自动连接到 " + found, Toast.LENGTH_SHORT).show()
+                // 地址变了，重建仓储再加载
+                repoVersion += 1
+                return@LaunchedEffect
+            }
+        }
+
         controller.pollLoop()
     }
 

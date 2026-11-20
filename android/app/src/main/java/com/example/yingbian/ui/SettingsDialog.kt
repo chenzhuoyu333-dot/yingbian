@@ -106,15 +106,19 @@ fun SettingsDialog(
                         enabled = !mock && !testing,
                         onClick = {
                             testing = true
-                            result = "正在扫描同网段…"
+                            result = "正在寻找…"
                             scope.launch {
-                                val found = ServerDiscovery.find()
+                                val found = ServerDiscovery.find(
+                                    known = listOf(base),
+                                    onPhase = { phase -> result = phase },
+                                )
                                 if (found != null) {
                                     base = found
-                                    result = "找到服务器：" + found.toString()
+                                    result = "找到服务器：" + found
                                     resultOk = true
                                 } else {
-                                    result = "没找到，检查后端是否运行、是否同一 Wi-Fi"
+                                    // 失败也要说清楚查过哪些网段，避免"就是找不到"
+                                    result = "没找到。" + ServerDiscovery.describeNetworks()
                                     resultOk = false
                                 }
                                 testing = false
