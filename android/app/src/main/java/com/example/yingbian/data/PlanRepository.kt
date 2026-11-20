@@ -354,11 +354,53 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
 
     override suspend fun regions(): List<Province> = emptyList()
 
-    override suspend fun patrol(now: String?, lat: Double?, lng: Double?): PatrolResult =
-        PatrolResult(needsAttention = false, severity = "none", summary = "", alerts = emptyList())
+    override suspend fun patrol(now: String?, lat: Double?, lng: Double?): PatrolResult {
+        // 离线也能演"管家主动提醒"：用内置计划的收口点算一条，
+        // 文案里标"演示"，不冒充真实定位与真实天气
+        val plan = current ?: loadPlan()
+        val closing = plan.nodes.firstOrNull { node ->
+            node.windowLatest != null && !node.confirmed
+        }
+        if (closing == null) {
+            return PatrolResult(false, "none", "一切正常", emptyList())
+        }
+        val latest = closing.windowLatest ?: ""
+        val alert = PatrolAlert(
+            kind = "closing",
+            title = "「" + closing.title + "」今天可能去不成了",
+            detail = "最晚 " + latest + " 进去，离线演示数据（连上后端会按真实时间判断）",
+            nodeId = closing.id,
+            severity = "warn",
+            action = "要不要去掉或换成附近别的地方",
+        )
+        return PatrolResult(
+            needsAttention = true,
+            severity = "warn",
+            summary = alert.title,
+            alerts = listOf(alert),
+        )
+    }
 
-    override suspend fun locate(lat: Double, lng: Double, now: String?): LocateResult =
-        throw IOException("离线模式无法做定位检查，请连上后端")
+    override suspend fun locate(lat: Double, lng: Double, now: String?): LocateResult {
+        // 离线演示：给一条确定的"落后 40 分钟"，方案复用内置素材，
+        // 让"定位 → 落后 → 改法"这条链路在没有网络时也能演
+        val plan = current ?: loadPlan()
+        val stops = plan.nodes.filter { it.type == "place" && !it.confirmed }
+        val at = stops.getOrNull(0)
+        val should = stops.getOrNull(1)
+        val repair = runCatching {
+            PlanJson.parseRepair(readAsset("repair-T1.json").getJSONObject("data"))
+        }.getOrNull()
+        return LocateResult(
+            status = "behind",
+            message = "你还在「" + (at?.title ?: "上一站") + "」，计划早就该到「" +
+                (should?.title ?: "下一站") + "」，已落后 40 分钟（离线演示数据）",
+            atNodeTitle = at?.title ?: "",
+            shouldNodeTitle = should?.title ?: "",
+            driftMinutes = 40,
+            schemes = repair?.schemes.orEmpty(),
+        )
+    }
 
     override suspend fun reset(): Plan {
         history.clear()
