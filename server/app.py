@@ -31,6 +31,7 @@ from yingbian.location import locate as location_locate
 from yingbian.models import Plan, PlanError, parse_time
 from yingbian.regions import load_regions
 from yingbian.patrol import patrol as run_patrol
+from yingbian.discovery import start as start_discovery
 from yingbian.repair import RepairResult, apply_actions
 from yingbian.weather import fetch_weather
 
@@ -306,6 +307,11 @@ def reset():
         PLANS[_pid] = _base.clone()
         VERSIONS[_pid] = [_base.clone()]
     return _ok({"reset": True, "plans": list(PLANS.keys())})
+
+
+# App 用 UDP 广播找我们；IP 变了也不用改配置。
+# 放在模块级，uvicorn 导入时就会启动，不依赖生命周期事件。
+start_discovery()
 
 
 @app.get("/api/plan/{plan_id}")
