@@ -353,6 +353,43 @@ def _version_guard(plan, body: dict):
     return None
 
 
+def _local_ipv4() -> list[dict[str, object]]:
+    """本机所有非回环 IPv4（给 /api/netinfo 用）"""
+    import socket as _socket
+
+    found: list[dict[str, object]] = []
+    try:
+        hostname = _socket.gethostname()
+        for info in _socket.getaddrinfo(hostname, None, _socket.AF_INET):
+            address = info[4][0]
+            if address.startswith("127.") or address.startswith("169.254."):
+                continue
+            if all(item["ip"] != address for item in found):
+                found.append({"ip": address, "url": f"http://{address}:8000"})
+    except Exception:
+        pass
+    return found
+
+
+@app.get("/api/netinfo")
+def get_netinfo():
+    """自报家门：手机用浏览器打开这个接口，就能判断网络通不通。
+
+    协议 -> 端口 -> 应用，一层层排除：
+      · 浏览器都打不开  → 网络/防火墙/AP 隔离问题，跟 App 无关
+      · 浏览器能打开 App 不行 → App 的地址配置问题
+    """
+    return _ok(
+        {
+            "app": "yingbian",
+            "port": 8000,
+            "discoveryPort": 8001,
+            "addresses": _local_ipv4(),
+            "hint": "手机浏览器打开任意一个 url + /api/plans，能看到 JSON 就说明网络是通的",
+        }
+    )
+
+
 @app.get("/api/regions")
 def get_regions(force: bool = Query(default=False)):
     """省 → 市两级清单，供新建行程时选目的地。
