@@ -225,7 +225,7 @@ def index():
 
   <div class="card links">
     <h2>接口</h2>
-    <a href="/docs">交互式文档</a>
+    <a href="/docs">接口自测（交互式文档）</a>
     <a href="/api/plans">行程列表（JSON）</a>
     <a href="/api/netinfo">网络自检</a>
     <a href="/api/regions">省市清单</a>
