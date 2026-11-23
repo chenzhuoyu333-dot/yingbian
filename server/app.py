@@ -97,49 +97,6 @@ if BASE.plan_id not in PLANS:
     VERSIONS[BASE.plan_id] = [BASE.clone()]
 
 
-INDEX_HTML = """<!doctype html>
-<html lang="zh"><head><meta charset="utf-8"><title>应变 · 接口自测</title>
-<style>
-body{font-family:-apple-system,"Segoe UI",sans-serif;max-width:860px;margin:32px auto;padding:0 16px;color:#222}
-h1{font-size:20px}button{margin:4px 6px 4px 0;padding:8px 14px;border:1px solid #1565C0;background:#fff;color:#1565C0;border-radius:8px;cursor:pointer}
-button:hover{background:#1565C0;color:#fff}
-pre{background:#f5f5f5;padding:14px;border-radius:8px;overflow:auto;max-height:520px;font-size:12px;line-height:1.5}
-.muted{color:#888;font-size:13px}
-</style></head><body>
-<h1>应变 · 接口自测</h1>
-<p class="muted">点按钮看返回，字段和手机端一致。</p>
-<div>
-  <button onclick="go('GET','/api/plan/__PLAN__')">1 取计划</button>
-  <button onclick="go('POST','/api/plan/__PLAN__/event',{type:'rain',from:'15:00',to:'17:00',prob:0.7})">2 下雨 → 影响</button>
-  <button onclick="go('POST','/api/plan/__PLAN__/repair',{event:{type:'rain',from:'15:00',to:'17:00',prob:0.7}})">
-3 求三方案</button>
-  <button onclick="go('POST','/api/plan/__PLAN__/event',{type:'cancel',nodeId:'n_lunch'})">4 餐厅取消</button>
-  <button onclick="applyB()">5 应用方案 B</button>
-  <button onclick="go('POST','/api/plan/__PLAN__/undo',{})">6 撤销</button>
-  <button onclick="go('GET','/api/weather?lat=30.27&lng=120.15')">7 天气</button>
-  <button onclick="go('POST','/api/generate',{city:'杭州',interests:['景点','公园','博物馆'],mustVisit:['清河坊历史文化特色街区'],pace:'normal',maxTransitMin:60})">9 生成行程</button>
-  <button onclick="go('POST','/api/reset',{})">8 重置</button>
-</div>
-<pre id="out">点上面任意按钮</pre>
-<script>
-const PLAN = "__PLAN__";
-async function call(method, path, body){
-  const res = await fetch(path, {method: method, headers: {'Content-Type': 'application/json'},
-    body: body ? JSON.stringify(body) : undefined});
-  return {status: res.status, data: await res.json()};
-}
-async function go(method, path, body){
-  const out = await call(method, path, body);
-  document.getElementById('out').textContent = out.status + "\\n" + JSON.stringify(out.data, null, 2);
-}
-async function applyB(){
-  const rep = await call('POST', '/api/plan/' + PLAN + '/repair',
-    {event: {type: 'rain', from: '15:00', to: '17:00', prob: 0.7}});
-  const schemes = (rep.data.data && rep.data.data.schemes) || [];
-  const pick = schemes.find(function(s){ return s.id === 'B'; }) || schemes[0] || {actions: []};
-  await go('POST', '/api/plan/' + PLAN + '/apply', {actions: pick.actions});
-}
-</script></body></html>"""
 
 
 def _ok(data: Any) -> dict[str, Any]:
@@ -184,7 +141,108 @@ async def plan_error_handler(_, exc: PlanError):
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return INDEX_HTML.replace("__PLAN__", BASE.plan_id)
+    """服务状态页：服务端直接渲染，不依赖前端脚本。
+
+    排查网络时打开 http://<ip>:8000/ 就能看到：服务是否活着、
+    手机该填哪个地址、有哪些行程。演示时也比一坨 JSON 体面。
+    """
+    plans = sorted(
+        (plan for plan in PLANS.values() if plan is not None),
+        key=lambda p: p.plan_id,
+        reverse=True,
+    )
+
+    rows = []
+    for plan in plans[:20]:
+        locked = len([node for node in plan.nodes if node.confirmed])
+        rows.append(
+            "<tr>"
+            f'<td><a href="/api/plan/{plan.plan_id}">{_esc(plan.title)}</a></td>'
+            f'<td class="mono">{_esc(plan.plan_id)}</td>'
+            f'<td class="num">{len(plan.nodes)} 节点</td>'
+            f'<td class="num">{locked} 锁定</td>'
+            "</tr>"
+        )
+    table = (
+        '<table><thead><tr><th>标题</th><th>ID</th><th class="num">规模</th>'
+        '<th class="num">锁定</th></tr></thead><tbody>'
+        + ("".join(rows) if rows else '<tr><td colspan="4">还没有行程</td></tr>')
+        + "</tbody></table>"
+    )
+
+    addrs = _local_ipv4()
+    if addrs:
+        address_html = "".join(
+            f'<div class="addr">http://{_esc(str(item["ip"]))}:8000</div>' for item in addrs
+        )
+    else:
+        address_html = '<div class="addr">未发现可用 IPv4（检查 Wi-Fi）</div>'
+
+    html = f"""<!doctype html>
+<html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>应变 · 服务状态</title>
+<style>
+  :root{{--ink:#16161a;--muted:#6b7280;--line:#e8e6ef;--accent:#6d4aff;--ok:#15803d;--bg:#faf9fc}}
+  *{{box-sizing:border-box}}
+  body{{margin:0;padding:24px 18px 48px;background:var(--bg);color:var(--ink);
+       font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans CJK SC",sans-serif}}
+  .wrap{{max-width:820px;margin:0 auto}}
+  h1{{font-size:22px;margin:0 0 6px}}
+  .badge{{display:inline-block;margin-left:8px;padding:2px 10px;border-radius:999px;
+         font-size:12px;font-weight:600;background:#e8f6ee;color:var(--ok);vertical-align:middle}}
+  .sub{{color:var(--muted);font-size:13px;margin-bottom:22px}}
+  .card{{background:#fff;border:1px solid var(--line);border-radius:16px;padding:16px 18px;
+        margin-bottom:14px;box-shadow:0 1px 2px rgba(22,22,26,.04)}}
+  .card h2{{font-size:12px;letter-spacing:.6px;text-transform:uppercase;color:var(--muted);
+          margin:0 0 10px;font-weight:700}}
+  .addr{{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:16px;color:var(--accent);
+        word-break:break-all;margin-bottom:4px}}
+  .hint{{font-size:12px;color:var(--muted)}}
+  table{{width:100%;border-collapse:collapse;font-size:13px}}
+  th,td{{text-align:left;padding:9px 6px;border-bottom:1px solid var(--line)}}
+  th{{color:var(--muted);font-size:12px;font-weight:600}}
+  tr:last-child td{{border-bottom:0}}
+  td.num{{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}}
+  .mono{{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;color:var(--muted)}}
+  a{{color:var(--accent);text-decoration:none}}
+  a:hover{{text-decoration:underline}}
+  .links a{{display:inline-block;margin:0 14px 6px 0;font-size:13px}}
+</style></head><body><div class="wrap">
+  <h1>应变<span class="badge">服务运行中</span></h1>
+  <div class="sub">周末游玩与短途旅行 · 行程变化助手 · 共 {len(plans)} 份行程</div>
+
+  <div class="card">
+    <h2>手机 / 平板填这个地址</h2>
+    {address_html}
+    <div class="hint">App → 设置 → 服务器地址 填上面这一行；或点「自动寻找」让它自己找。</div>
+  </div>
+
+  <div class="card">
+    <h2>行程（最近 20 份）</h2>
+    {table}
+  </div>
+
+  <div class="card links">
+    <h2>接口</h2>
+    <a href="/docs">交互式文档</a>
+    <a href="/api/plans">行程列表（JSON）</a>
+    <a href="/api/netinfo">网络自检</a>
+    <a href="/api/regions">省市清单</a>
+  </div>
+</div></body></html>"""
+    return HTMLResponse(html)
+
+
+def _esc(text: str) -> str:
+    """最小 HTML 转义：行程标题里出现过 & 和 <"""
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
 
 
 @app.post("/api/interpret")
