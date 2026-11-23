@@ -1463,7 +1463,14 @@ fun LoadingScreen() {
 }
 
 @Composable
-fun ErrorScreen(message: String, onRetry: () -> Unit, onCache: () -> Unit) {
+fun ErrorScreen(
+    message: String,
+    onRetry: () -> Unit,
+    onCache: () -> Unit,
+    onFind: () -> Unit = {},
+    finding: Boolean = false,
+    findHint: String = "",
+) {
     Column(
         modifier = Modifier.fillMaxSize().padding(32.dp),
         verticalArrangement = Arrangement.Center,
@@ -1475,9 +1482,30 @@ fun ErrorScreen(message: String, onRetry: () -> Unit, onCache: () -> Unit) {
             fontSize = 13.sp,
             color = InvalidRed,
             textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = 8.dp, bottom = 18.dp),
+            modifier = Modifier.padding(top = 8.dp, bottom = 6.dp),
         )
-        Button(onClick = onRetry, modifier = Modifier.fillMaxWidth()) { Text("重试") }
+        if (findHint.isNotBlank()) {
+            Text(
+                text = findHint,
+                fontSize = 11.sp,
+                color = Muted,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(bottom = 10.dp),
+            )
+        } else {
+            Spacer(Modifier.height(12.dp))
+        }
+        // 连不上时最常见两种原因：地址变了、或不在同一网络。
+        // 直接给一个"自己找"，比让用户去设置里摸索有用得多。
+        Button(
+            onClick = onFind,
+            enabled = !finding,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (finding) "正在寻找服务器…" else "自动寻找服务器")
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = onRetry, modifier = Modifier.fillMaxWidth()) { Text("重试") }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(onClick = onCache, modifier = Modifier.fillMaxWidth()) { Text("用离线缓存") }
     }

@@ -74,8 +74,12 @@ fun YingBianRoot() {
     var newPlanOpen by remember { mutableStateOf(false) }
     var activityOpen by remember { mutableStateOf(false) }
     var patrolOpen by remember { mutableStateOf(false) }
+    // 队友的住宿/停留节点状态
     var lodgingOpen by remember { mutableStateOf(false) }
     var stayNode by remember { mutableStateOf<PlanNode?>(null) }
+    // 我的自动寻找服务器状态
+    var findingServer by remember { mutableStateOf(false) }
+    var findHint by remember { mutableStateOf("") }
 
     /** 把一条管家提醒映射成既有的变化处理流程 */
     fun handlePatrolAlert(alert: PatrolAlert) {
@@ -89,6 +93,30 @@ fun YingBianRoot() {
                 }
                 else -> Unit
             }
+        }
+    }
+
+    /** 手动触发自动寻找（错误页上的按钮） */
+    suspend fun findServerManually() {
+        findingServer = true
+        findHint = ""
+        try {
+            val found = withContext(Dispatchers.IO) {
+                ServerDiscovery.find(
+                    known = settings.lastKnownBases + settings.baseUrl,
+                    onPhase = { phase -> findHint = phase },
+                )
+            }
+            if (found != null) {
+                settings.baseUrl = found
+                settings.lastKnownBases = listOf(found)
+                findHint = "找到 " + found + "，正在重载…"
+                repoVersion += 1
+            } else {
+                findHint = "没找到。" + ServerDiscovery.describeNetworks()
+            }
+        } finally {
+            findingServer = false
         }
     }
 
@@ -260,6 +288,9 @@ fun YingBianRoot() {
                         message = controller.error ?: "",
                         onRetry = { scope.launch { controller.load() } },
                         onCache = { controller.useCache() },
+                        onFind = { scope.launch { findServerManually() } },
+                        finding = findingServer,
+                        findHint = findHint,
                     )
 
                     controller.screen == AppScreen.Home -> HomeScreen(
