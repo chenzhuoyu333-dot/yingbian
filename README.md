@@ -8,6 +8,9 @@ Android 端在 `android/`，分 emulator（离线 mock）和 lan（连后端）�
 
 **产品介绍书（所有规则、阈值、判断条件）**：[`docs/产品介绍书.md`](docs/产品介绍书.md)
 
+**在自己电脑上跑起来（队友必读）**：[`docs/队友-本机部署.md`](docs/队友-本机部署.md)
+——分三种情况（只测 App / 自己跑后端 / 两台电脑都在用），含 6 类常见故障对照表。
+
 **唯一数据源是 `data/plan-saturday.json`**；`archive/w2-reference/` 是组员的独立参考实现，
 数据与主实现不同，不参与构建、测试和演示，详见 `archive/README.md`。
 
