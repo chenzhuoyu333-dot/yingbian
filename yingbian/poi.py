@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import gzip
+import re
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
@@ -128,6 +129,9 @@ class Poi:
     tags: list[str] = field(default_factory=list)   # 招牌菜/标签
     type_text: str = ""
     address: str = ""
+    # 城市必看：由 5A 景区 / 风景名胜检索命中，或在城市基础池里评分很高。
+    # 生成时这类点优先入选，保证一份计划先像"来这座城市该看的"，再谈偏好。
+    core: bool = False
 
     def open_window(self) -> tuple[int, int] | None:
         """把营业时间解析成 (开门分钟, 关门分钟)；解析不了返回 None"""
@@ -334,12 +338,16 @@ def search_keyword(city: str, keyword: str, limit: int = MAX_PER_KEYWORD) -> lis
     return unique
 
 
-def search_interests(city: str, interests: list[str]) -> list[Poi]:
+def search_interests(
+    city: str,
+    interests: list[str],
+    limit: int = MAX_PER_KEYWORD,
+) -> list[Poi]:
     """按多个兴趣词检索并合并去重（风格词会被翻译掉，翻不出来就退回默认类别）"""
     collected: list[Poi] = []
     seen: set[str] = set()
     for word in expand_interests(list(interests or [])):
-        for poi in search_keyword(city, word):
+        for poi in search_keyword(city, word, limit=limit):
             if poi.name in seen:
                 continue
             seen.add(poi.name)
@@ -349,7 +357,14 @@ def search_interests(city: str, interests: list[str]) -> list[Poi]:
 
 def find_by_name(city: str, name: str) -> Poi | None:
     """必去点：按名字精确检索一次"""
-    for poi in search_keyword(city, name, limit=5):
+    results = search_keyword(city, name, limit=5)
+    # 高德对「绿地海外滩」会把「绿地海外滩营销中心」排在小区的「绿地·海外滩」前面。
+    # 去掉间隔号/空格后完全同名的结果优先，避免把售楼处当成用户住的地方。
+    normalized = re.sub(r"[·•・\s\-_（）()]", "", name)
+    for poi in results:
+        if re.sub(r"[·•・\s\-_（）()]", "", poi.name) == normalized:
+            return poi
+    for poi in results:
         if name in poi.name or poi.name in name:
             return poi
     return None
@@ -494,6 +509,16 @@ def _transit_walk_m(transit: dict) -> int:
     return total
 
 
+def _transit_transfers(transit: dict) -> int:
+    """公交方案换乘次数：每多一段公交/地铁算一次换乘。"""
+    buses = 0
+    for segment in transit.get("segments") or []:
+        bus = segment.get("bus") or {}
+        if bus.get("buslines"):
+            buses += 1
+    return max(0, buses - 1)
+
+
 def route_plan(
     a: Poi,
     b: Poi,
@@ -573,7 +598,16 @@ def route_plan(
                         ),
                     )
                 else:
-                    path = transits[0]
+                    # 默认不再盲取高德返回的第一条：先比总时长，再比换乘少，
+                    # 最后比步行少。这样“推荐方案”才真的是推荐。
+                    path = min(
+                        transits,
+                        key=lambda item: (
+                            int(float(item.get("duration") or 10**9)),
+                            _transit_transfers(item),
+                            _transit_walk_m(item),
+                        ),
+                    )
                 label = _transit_label(path)
             else:
                 paths = route.get("paths") or []

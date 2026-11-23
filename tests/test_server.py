@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from server import app as app_module
 from server.app import app
 from yingbian import load_plan
+from yingbian.models import parse_time
 from yingbian.repair import RepairResult
 
 
@@ -126,6 +127,38 @@ class ServerContractTest(unittest.TestCase):
         self.assertEqual(applied["data"]["version"], 2)
         undo = self.client.post(f"/api/plan/{self.plan_id}/undo").json()
         self.assertEqual(undo["data"]["version"], 1)
+
+    def test_undo_preview_lists_what_will_restore(self):
+        repair_body = self.client.post(
+            f"/api/plan/{self.plan_id}/repair",
+            json={"event": RAIN, "schemes": ["B"]},
+        ).json()
+        actions = repair_body["data"]["schemes"][0]["actions"]
+        self.client.post(f"/api/plan/{self.plan_id}/apply", json={"actions": actions})
+        preview = self.client.get(f"/api/plan/{self.plan_id}/undo/preview").json()["data"]
+        self.assertTrue(preview["canUndo"])
+        self.assertEqual(preview["targetVersion"], 1)
+        self.assertTrue(preview["changes"])
+        self.assertTrue(preview["summary"])
+
+    def test_stay_change_shifts_later_nodes_same_day(self):
+        base = load_plan()
+        target = base.find("n_town")
+        target.poi = {"lat": 30.25, "lng": 120.15, "openTime": "08:00-22:00"}
+        target.date = base.date
+        app_module.PLANS = {base.plan_id: base.clone()}
+        app_module.VERSIONS = {base.plan_id: [base.clone()]}
+        next_node = base.find("n_lunch")
+        before = next_node.start
+        body = self.client.post(
+            f"/api/plan/{base.plan_id}/node/n_town/stay",
+            json={"minutes": target.duration + 30},
+        ).json()
+        self.assertTrue(body["ok"])
+        plan = body["data"]["plan"]
+        after = next(node for node in plan["nodes"] if node["id"] == "n_lunch")["start"]
+        self.assertNotEqual(before, parse_time(after))
+        self.assertEqual(body["data"]["version"], 2)
 
     def test_blocked_t4(self):
         self.client.post(

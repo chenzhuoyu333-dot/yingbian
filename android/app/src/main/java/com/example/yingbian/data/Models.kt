@@ -33,6 +33,11 @@ data class PlanNode(
     val date: String = "",
     /** 住宿占位：只表示过夜，不表示停留时长 */
     val overnight: Boolean = false,
+    /** 为什么有这一站：城市必看 / 必去 / 偏好 / 顺路 */
+    val selectionReason: String = "",
+    /** 停留时长怎么来的：经验值 / 用户调整 */
+    val stayBasis: String = "",
+    val reason: String = "",
 ) {
     val durationMin: Int
         get() = (parseMinutes(end) - parseMinutes(start)).coerceAtLeast(0)
@@ -196,6 +201,10 @@ data class LocateResult(
     val status: String,          // on_track | behind | unknown | no_location_data
     val message: String,
     val atNodeTitle: String,
+    val atNodeId: String = "",
+    val atDistanceM: Int = 0,
+    /** 人就在当前目标点 250 米内：可以提示“到了，打卡吗” */
+    val arrived: Boolean = false,
     val shouldNodeTitle: String,
     val driftMinutes: Int,
     val schemes: List<RepairScheme>,
@@ -221,6 +230,22 @@ data class PatrolResult(
     val alerts: List<PatrolAlert>,
 )
 
+/** 撤销预览：点“撤销”之前先让用户看清会退回什么 */
+data class UndoChange(
+    val nodeId: String,
+    val title: String,
+    val text: String,
+    val at: String = "",
+)
+
+data class UndoPreview(
+    val canUndo: Boolean,
+    val currentVersion: Int,
+    val targetVersion: Int,
+    val summary: String,
+    val changes: List<UndoChange>,
+)
+
 /** 省 → 市，用于新建行程时选目的地 */
 data class Province(
     val name: String,
@@ -232,11 +257,11 @@ data class GeneratePrefs(
     val date: String = "2026-11-14",
     val startTime: String = "09:30",
     val endTime: String = "20:00",
-    val interests: List<String> = listOf("景点", "公园", "咖啡"),
+    val interests: List<String> = listOf("景点", "公园", "博物馆"),
     val mustVisit: List<String> = emptyList(),
     val avoid: List<String> = emptyList(),
     val pace: String = "normal",
-    val maxTransitMin: Int = 45,
+    val maxTransitMin: Int = 60,
 )
 
 data class Weather(
@@ -269,6 +294,21 @@ fun applyActions(plan: Plan, actions: List<RepairAction>): Plan {
     var nodes = plan.nodes
     for (action in actions) {
         nodes = when (action.action) {
+            "shift_all" -> {
+                val minutes = action.payload["minutes"]?.toIntOrNull() ?: 0
+                val ids = action.payload["nodeIds"].orEmpty()
+                    .split(",")
+                    .filter { it.isNotBlank() }
+                    .toSet()
+                nodes.map { node ->
+                    if (node.id !in ids) node
+                    else node.copy(
+                        start = node.startWithShift(minutes),
+                        end = node.endWithShift(minutes),
+                    )
+                }
+            }
+
             "shift" -> {
                 val minutes = action.payload["minutes"]?.toIntOrNull() ?: 0
                 nodes.map { node ->
@@ -330,7 +370,12 @@ object PlanJson {
         val iterator = keys()
         while (iterator.hasNext()) {
             val key = iterator.next()
-            result[key] = opt(key).toString()
+            val value = opt(key)
+            result[key] = if (value is JSONArray) {
+                (0 until value.length()).joinToString(",") { value.optString(it) }
+            } else {
+                value?.toString().orEmpty()
+            }
         }
         return result
     }
@@ -386,6 +431,9 @@ object PlanJson {
                 sacrifice = item.text("sacrifice"),
                 date = item.text("date"),
                 overnight = item.optBoolean("overnight", false),
+                selectionReason = item.text("selectionReason"),
+                stayBasis = item.text("stayBasis"),
+                reason = item.text("reason"),
             )
         }
         val edges = raw.optJSONArray("edges")?.objects().orEmpty().map { item ->
@@ -570,6 +618,9 @@ object PlanJson {
             status = data.optString("status", "unknown"),
             message = data.optString("message", ""),
             atNodeTitle = data.optString("atNodeTitle", ""),
+            atNodeId = data.optString("atNodeId", ""),
+            atDistanceM = data.optInt("atDistanceM", 0),
+            arrived = data.optBoolean("arrived", false),
             shouldNodeTitle = data.optString("shouldNodeTitle", ""),
             driftMinutes = data.optInt("driftMinutes", 0),
             schemes = schemes,
@@ -589,6 +640,22 @@ object PlanJson {
                     nodeId = item.optString("nodeId", ""),
                     severity = item.optString("severity", "info"),
                     action = item.optString("action", ""),
+                )
+            },
+        )
+
+    fun parseUndoPreview(data: JSONObject): UndoPreview =
+        UndoPreview(
+            canUndo = data.optBoolean("canUndo", false),
+            currentVersion = data.optInt("currentVersion", 1),
+            targetVersion = data.optInt("targetVersion", 1),
+            summary = data.optString("summary", ""),
+            changes = data.optJSONArray("changes")?.objects().orEmpty().map { item ->
+                UndoChange(
+                    nodeId = item.text("nodeId"),
+                    title = item.text("title"),
+                    text = item.text("text"),
+                    at = item.text("at"),
                 )
             },
         )

@@ -119,6 +119,10 @@ class Node:
     poi: dict[str, Any] | None = None
     # 这个点为什么被选中（来自打分函数，可解释）
     reason: str = ""
+    # 城市必看 / 必去 / 偏好 / 顺路：界面上直接展示，解释“为什么有这一站”
+    selection_reason: str = ""
+    # 停留时长的依据（经验值 / 用户调整）；空表示旧计划没有这个字段
+    stay_basis: str = ""
 
     @property
     def duration(self) -> int:
@@ -153,6 +157,8 @@ class Node:
             # 生成器会填；手工计划没有这两个字段，前端读成空即可。
             "poi": dict(self.poi) if self.poi else None,
             "reason": self.reason,
+            "selectionReason": self.selection_reason,
+            "stayBasis": self.stay_basis,
         }
 
     @classmethod
@@ -182,6 +188,8 @@ class Node:
                 sacrifice=raw.get("sacrifice", ""),
                 poi=dict(raw.get("poi") or {}) or None,
                 reason=raw.get("reason", ""),
+                selection_reason=raw.get("selectionReason", ""),
+                stay_basis=raw.get("stayBasis", ""),
             )
         except KeyError as exc:
             raise PlanError(f"节点缺少字段 {exc.args[0]}: {raw.get('id', '?')}") from exc
@@ -230,6 +238,9 @@ class Plan:
     version: int = 1
     end_date: str = ""
     days: int = 1
+    # 生成器的说明（warnings / unresolvedMustVisit / humanSummary）。
+    # 内置计划没有这一段；有了它，生成后的提示才会跟着计划一起返回给 App。
+    generation: dict[str, Any] = field(default_factory=dict)
 
     def node(self, node_id: str) -> Node:
         for node in self.nodes:
@@ -279,7 +290,7 @@ class Plan:
         return order
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
             "planId": self.plan_id,
             "title": self.title,
             "date": self.date,
@@ -289,6 +300,9 @@ class Plan:
             "nodes": [node.to_dict() for node in self.nodes],
             "edges": [edge.to_dict() for edge in self.edges],
         }
+        if self.generation:
+            result["generation"] = self.generation
+        return result
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> "Plan":
@@ -311,6 +325,7 @@ class Plan:
                     for edge in raw.get("edges", [])
                 ],
                 version=int(raw.get("version", 1)),
+                generation=dict(raw.get("generation") or {}),
             )
         except KeyError as exc:
             raise PlanError(f"计划缺少字段 {exc.args[0]}") from exc

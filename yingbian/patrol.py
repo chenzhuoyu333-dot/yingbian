@@ -192,7 +192,6 @@ def patrol(
     alerts.extend(_check_behind(plan, now_minutes, lat, lng))
     alerts.extend(_check_closing(plan, now_minutes))
     alerts.extend(_check_weather(plan))
-    alerts.extend(_check_tight(plan))
 
     order = {"urgent": 0, "warn": 1, "info": 2}
     alerts.sort(key=lambda item: order.get(item["severity"], 9))

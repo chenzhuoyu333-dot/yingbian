@@ -278,23 +278,49 @@ def _rule_preferences(text: str) -> dict:
         )
     )
 
-    # 时间：显式 HH:mm 优先，其次"下午/早上/不想早起"这类口头说法
+    # 时间：显式 HH:mm 优先，其次"下午/早上/不想早起"这类口头说法。
+    # 两个时间点 = 起止；一个时间点要看上下文，判断它是“出发”还是“结束”。
     start_time = "09:30"
-    explicit = re.search(r"(\d{1,2})[:：](\d{2})", text)
-    if explicit:
-        start_time = format_time(int(explicit.group(1)) * 60 + int(explicit.group(2)))
-    elif any(w in text for w in ["不想早起", "睡到自然醒", "晚点出发", "别太早"]):
-        start_time = "10:30"
-    elif "早上" in text or "一早" in text:
-        start_time = "08:30"
-    elif "中午" in text:
-        start_time = "11:30"
-
     end_time = "20:00"
-    if any(w in text for w in ["早点回", "不想太晚", "晚上有事", "早结束"]):
-        end_time = "17:30"
-    elif any(w in text for w in ["全天", "一整天", "从早到晚"]):
-        end_time = "21:00"
+    end_explicit = False
+    found_times = [
+        (int(match.group(1)), int(match.group(2)), match.start(), match.end())
+        for match in re.finditer(r"(\d{1,2})[:：](\d{2})", text)
+        if 0 <= int(match.group(1)) <= 23 and 0 <= int(match.group(2)) <= 59
+    ]
+    if len(found_times) >= 2:
+        first, last = found_times[0], found_times[-1]
+        start_time = format_time(first[0] * 60 + first[1])
+        end_time = format_time(last[0] * 60 + last[1])
+        end_explicit = True
+    elif len(found_times) == 1:
+        hour, minute, pos, end_pos = found_times[0]
+        tail = text[end_pos:end_pos + 10]
+        head = text[max(0, pos - 6):pos]
+        looks_like_end = any(w in tail for w in ("结束", "回", "离开", "到")) or any(
+            w in head for w in ("到", "至", "结束")
+        )
+        if looks_like_end:
+            end_time = format_time(hour * 60 + minute)
+            end_explicit = True
+        else:
+            start_time = format_time(hour * 60 + minute)
+
+    if start_time == "09:30":
+        if any(w in text for w in ["不想早起", "睡到自然醒", "晚点出发", "别太早"]):
+            start_time = "10:30"
+        elif "早上" in text or "一早" in text:
+            start_time = "08:30"
+        elif "中午" in text:
+            start_time = "11:30"
+
+    if not end_explicit:
+        if any(w in text for w in ["早点回", "不想太晚", "晚上有事", "早结束"]):
+            end_time = "17:30"
+            end_explicit = True
+        elif any(w in text for w in ["全天", "一整天", "从早到晚"]):
+            end_time = "21:00"
+            end_explicit = True
 
     pace = "normal"
     if any(w in text for w in ["轻松", "不想赶", "慢慢", "休闲", "放松"]):
@@ -331,21 +357,34 @@ def _rule_preferences(text: str) -> dict:
     elif "周末" in text:
         days = 2
     if days is not None:
-        days = max(1, min(7, days))
+        days = max(1, min(14, days))
 
     prefer_rating = any(
         w in text for w in ("评分高", "评价好", "口碑好", "高分", "好吃的", "有名")
     ) or None
 
+    # 结束时间：先看用户有没有明确说；没说就按节奏/人群给建议。
+    # 这里只改默认建议，用户明确给的时间永远优先。
+    if not end_explicit:
+        if any(w in text for w in ["夜景", "夜市", "灯光"]):
+            end_time = "21:30"
+        elif pace == "relaxed" or avoid_walking:
+            end_time = "18:30"
+        elif pace == "packed":
+            end_time = "21:00"
+        else:
+            end_time = "20:00"
+
     return {
         "city": city,
         "startTime": start_time,
         "endTime": end_time,
-        "interests": interests or ["景点", "公园", "咖啡"],
+        # 默认只放观光类。咖啡必须由用户明确说出来，不能靠默认值带进来。
+        "interests": interests or ["景点", "公园", "博物馆"],
         "mustVisit": must,
         "avoid": avoid,
         "pace": pace,
-        "maxTransitMin": 45,
+        "maxTransitMin": 60,
         "days": days,
         "avoidWalking": avoid_walking,
         "budgetPerPerson": budget,
@@ -409,13 +448,13 @@ _PREF_SYSTEM = """你是行程偏好解析器。把用户的中文需求解析�
   city: 城市名或 null
   startTime: "HH:mm" 或 null（"不想早起/晚点出发/睡到自然醒"要据此给出具体时间）
   endTime: "HH:mm" 或 null（"早点回/不想太晚"要据此给出具体时间）
-  interests: 字符串数组，取值只能是 古镇/公园/博物馆/咖啡/美食/夜景/拍照/爬山，
-             最多 4 个；用户没提就输出 []
-  mustVisit: 字符串数组，用户说"必去/一定要去"的具体地点名，最多 3 个；没有就输出 []
-  avoid: 字符串数组，用户说"不想/别去/不去"的东西；没有就输出 []
+  interests: 字符串数组，取值只能是 景点/古镇/公园/博物馆/咖啡/美食/夜景/拍照/爬山，
+             最多 6 个；用户没提就输出 []
+  mustVisit: 字符串数组，用户说"必去/一定要去"的具体地点名；没有就输出 []
+  avoid: 字符串数组，用户说"不想/别去/不去"的东西，最多 8 个；没有就输出 []
   pace: "relaxed" | "normal" | "packed" 或 null（"轻松/不想赶"→relaxed，"多去几个"→packed）
   maxTransitMin: 整数或 null
-  days: 行程天数（整数 1~7）或 null（"3天2晚"→3，"两天"→2，"周末"→2）
+  days: 行程天数（整数 1~14）或 null（"3天2晚"→3，"两天"→2，"周末"→2）
   budgetPerPerson: 整数（人均预算上限，元）或 null（"人均100以内/预算200"）
   preferHighRating: true/false 或 null（"想去评价好的/评分高的/口碑好"）
   lodging: 字符串或 null（"住在XX酒店/住在西湖边/酒店定在XX"里的酒店名或区域）
@@ -456,20 +495,21 @@ def parse_preferences(text: str) -> tuple[dict, str]:
             if fixed[field] != default:
                 merged[field] = fixed[field]
         try:
-            merged["maxTransitMin"] = max(5, min(120, int(merged.get("maxTransitMin", 45))))
+            merged["maxTransitMin"] = max(5, min(120, int(merged.get("maxTransitMin", 60))))
         except (TypeError, ValueError):
-            merged["maxTransitMin"] = 45
+            merged["maxTransitMin"] = 60
 
-        # 数量上限：模型容易"全都要"，7 个兴趣词会让检索变慢且吃 QPS
+        # 数量上限：模型容易"全都要"，太多兴趣词会让检索变慢且吃 QPS。
+        # 必去点不再截断：用户说"必去"的东西静默消失，比多查几次更糟。
         interests = merged.get("interests")
         if isinstance(interests, list):
-            merged["interests"] = [str(i) for i in interests][:4] or fixed["interests"]
+            merged["interests"] = [str(i) for i in interests][:6] or fixed["interests"]
         must = merged.get("mustVisit")
         if isinstance(must, list):
-            merged["mustVisit"] = [str(m) for m in must][:3]
+            merged["mustVisit"] = [str(m) for m in must]
         avoid = merged.get("avoid")
         if isinstance(avoid, list):
-            merged["avoid"] = [str(a) for a in avoid][:4]
+            merged["avoid"] = [str(a) for a in avoid][:8]
 
         # 预算：必须是合理正整数，否则退回规则结果
         try:
@@ -479,7 +519,7 @@ def parse_preferences(text: str) -> tuple[dict, str]:
             merged["budgetPerPerson"] = fixed.get("budgetPerPerson")
 
         try:
-            merged["days"] = max(1, min(7, int(merged.get("days") or 1)))
+            merged["days"] = max(1, min(14, int(merged.get("days") or 1)))
         except (TypeError, ValueError):
             merged["days"] = 1
 

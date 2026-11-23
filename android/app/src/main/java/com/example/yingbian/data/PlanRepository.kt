@@ -27,6 +27,12 @@ interface PlanRepository {
     ): CheckinResult
     suspend fun applyScheme(scheme: RepairScheme): Plan
     suspend fun undo(): Plan
+    /** 撤销前先取“会退回什么”，界面上弹确认框用 */
+    suspend fun undoPreview(): UndoPreview
+    /** 生成后补/改住宿：只重算酒店节点和紧邻通勤 */
+    suspend fun updateLodging(lodging: String): Plan
+    /** 调整某站停留时长，同一天后面的站点整体顺延 */
+    suspend fun updateStay(nodeId: String, minutes: Int): Plan
     suspend fun setLocked(nodeId: String, locked: Boolean): Plan
     suspend fun reset(): Plan
     /** 取天气；有定位时传经纬度。行程天气请用 planWeather()。 */
@@ -52,6 +58,8 @@ interface PlanRepository {
         city: String? = null,
         days: Int? = null,
         lodging: String = "",
+        pace: String = "normal",
+        maxTransitMin: Int? = null,
         avoidWalking: Boolean = false,
         startPlace: String? = null,
         startLat: Double? = null,
@@ -284,6 +292,23 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
         return restored
     }
 
+    override suspend fun undoPreview(): UndoPreview {
+        val canUndo = history.isNotEmpty()
+        return UndoPreview(
+            canUndo = canUndo,
+            currentVersion = current?.version ?: 1,
+            targetVersion = if (canUndo) (current?.version ?: 1) - 1 else (current?.version ?: 1),
+            summary = if (canUndo) "将撤销最近一次改动，恢复上一版行程" else "没有可撤销的改动",
+            changes = emptyList(),
+        )
+    }
+
+    override suspend fun updateLodging(lodging: String): Plan =
+        current ?: loadPlan()
+
+    override suspend fun updateStay(nodeId: String, minutes: Int): Plan =
+        current ?: loadPlan()
+
     override suspend fun setLocked(nodeId: String, locked: Boolean): Plan {
         blockedMode = locked && nodeId == "n_sunset"
         val base = current ?: loadPlan()
@@ -341,6 +366,8 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
         city: String?,
         days: Int?,
         lodging: String,
+        pace: String,
+        maxTransitMin: Int?,
         avoidWalking: Boolean,
         startPlace: String?,
         startLat: Double?,
@@ -455,8 +482,10 @@ class RemotePlanRepository(
         val connection = URL(settings.baseUrl.trimEnd('/') + path).openConnection() as HttpURLConnection
         try {
             connection.requestMethod = method
-            connection.connectTimeout = 4_000
-            connection.readTimeout = 8_000
+            connection.connectTimeout = 6_000
+            // 生成两天以上的行程要多次查高德路径，手机上 8 秒经常不够。
+            // 这里放宽到 60 秒，避免后端还在正常生成时客户端先断开。
+            connection.readTimeout = 60_000
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             if (body != null) {
                 connection.doOutput = true
@@ -467,7 +496,14 @@ class RemotePlanRepository(
             val code = connection.responseCode
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
-            if (code !in 200..299) throw IOException("HTTP $code：$text")
+            if (code !in 200..299) {
+                // 后端的错误是 {"ok":false,"error":{"message":"..."}}。
+                // 直接把 message 显示给用户，不要把整段 JSON 糊到界面上。
+                val message = runCatching {
+                    JSONObject(text).optJSONObject("error")?.optString("message")
+                }.getOrNull()
+                throw IOException(message?.takeIf { it.isNotBlank() } ?: "HTTP $code：$text")
+            }
             val root = JSONObject(text)
             if (!root.optBoolean("ok", false)) {
                 val message = root.optJSONObject("error")?.optString("message") ?: "请求失败"
@@ -576,6 +612,33 @@ class RemotePlanRepository(
         return PlanJson.parsePlan(raw)
     }
 
+    override suspend fun undoPreview(): UndoPreview =
+        PlanJson.parseUndoPreview(request("GET", "/api/plan/$planId/undo/preview"))
+
+    override suspend fun updateLodging(lodging: String): Plan {
+        val data = request(
+            "POST",
+            "/api/plan/$planId/lodging",
+            JSONObject().put("lodging", lodging),
+        )
+        val raw = data.getJSONObject("plan")
+        savePlan(raw)
+        planVersion = raw.optInt("version", planVersion)
+        return PlanJson.parsePlan(raw)
+    }
+
+    override suspend fun updateStay(nodeId: String, minutes: Int): Plan {
+        val data = request(
+            "POST",
+            "/api/plan/$planId/node/$nodeId/stay",
+            JSONObject().put("minutes", minutes),
+        )
+        val raw = data.getJSONObject("plan")
+        savePlan(raw)
+        planVersion = raw.optInt("version", planVersion)
+        return PlanJson.parsePlan(raw)
+    }
+
     override suspend fun setLocked(nodeId: String, locked: Boolean): Plan {
         val body = JSONObject()
             .put("planId", planId)
@@ -640,6 +703,8 @@ class RemotePlanRepository(
         city: String?,
         days: Int?,
         lodging: String,
+        pace: String,
+        maxTransitMin: Int?,
         avoidWalking: Boolean,
         startPlace: String?,
         startLat: Double?,
@@ -657,6 +722,8 @@ class RemotePlanRepository(
         }
         if (days != null) body.put("days", days)
         if (lodging.isNotBlank()) body.put("lodging", lodging)
+        if (pace.isNotBlank()) body.put("pace", pace)
+        if (maxTransitMin != null) body.put("maxTransitMin", maxTransitMin)
         if (avoidWalking) body.put("avoidWalking", true)
         val data = request("POST", "/api/generate", body)
         val raw = data.getJSONObject("plan")
@@ -690,7 +757,7 @@ class RemotePlanRepository(
             .put("lat", lat)
             .put("lng", lng)
         if (!now.isNullOrBlank()) body.put("now", now)
-        return PlanJson.parseLocate(request("POST", "/api/plan//locate", body))
+        return PlanJson.parseLocate(request("POST", "/api/plan/$planId/locate", body))
     }
 
     override suspend fun deletePlan(planId: String) {

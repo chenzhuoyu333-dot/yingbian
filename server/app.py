@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -28,7 +29,8 @@ from yingbian.collab import SCHEMES, STATE as COLLAB
 from yingbian.generate import Preferences, generate
 from yingbian.location import checkin as location_checkin
 from yingbian.location import locate as location_locate
-from yingbian.models import Plan, PlanError, parse_time
+from yingbian.models import Plan, PlanError, format_time, parse_time
+from yingbian.poi import choose_route, find_by_name
 from yingbian.regions import load_regions
 from yingbian.patrol import patrol as run_patrol
 from yingbian.discovery import start as start_discovery
@@ -51,6 +53,8 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 # 这样"我的计划"首页在重启后仍然有历史记录，演示不会一重启就清空。
 PLAN_DIR = DATA_DIR / "plans"
 PLAN_DIR.mkdir(parents=True, exist_ok=True)
+LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 PLANS: dict[str, Any] = {}
 VERSIONS: dict[str, list[Any]] = {}
@@ -113,7 +117,7 @@ pre{background:#f5f5f5;padding:14px;border-radius:8px;overflow:auto;max-height:5
   <button onclick="applyB()">5 应用方案 B</button>
   <button onclick="go('POST','/api/plan/__PLAN__/undo',{})">6 撤销</button>
   <button onclick="go('GET','/api/weather?lat=30.27&lng=120.15')">7 天气</button>
-  <button onclick="go('POST','/api/generate',{city:'杭州',interests:['景点','公园','咖啡'],mustVisit:['清河坊历史文化特色街区'],pace:'normal',maxTransitMin:45})">9 生成行程</button>
+  <button onclick="go('POST','/api/generate',{city:'杭州',interests:['景点','公园','博物馆'],mustVisit:['清河坊历史文化特色街区'],pace:'normal',maxTransitMin:60})">9 生成行程</button>
   <button onclick="go('POST','/api/reset',{})">8 重置</button>
 </div>
 <pre id="out">点上面任意按钮</pre>
@@ -154,6 +158,23 @@ def _error(code: str, message: str, status: int = 400) -> JSONResponse:
         status_code=status,
         content={"ok": False, "error": {"code": code, "message": message}},
     )
+
+
+def _log_generate(kind: str, body: dict, exc: Exception | None = None) -> None:
+    """把生成请求和失败堆栈写到 logs/generate.log，方便复现手机端失败。"""
+    record = {
+        "at": datetime.now().isoformat(timespec="seconds"),
+        "kind": kind,
+        "body": body,
+    }
+    if exc is not None:
+        record["error"] = f"{type(exc).__name__}: {exc}"
+        record["traceback"] = traceback.format_exc()
+    try:
+        with (LOG_DIR / "generate.log").open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+    except OSError:
+        pass
 
 
 @app.exception_handler(PlanError)
@@ -213,8 +234,8 @@ def post_generate(body: dict = Body(...)):
 
     请求体（全部可选，缺省用默认值）：
       {"city":"杭州","startDate":"2026-11-19","days":2,"startTime":"09:30","endTime":"20:00",
-       "interests":["景点","公园","咖啡"],"mustVisit":["清河坊历史文化特色街区"],
-       "avoid":["爬山"],"pace":"normal","maxTransitMin":45,"startPlace":"",
+       "interests":["景点","公园","博物馆"],"mustVisit":["清河坊历史文化特色街区"],
+       "avoid":["爬山"],"pace":"normal","maxTransitMin":60,"startPlace":"",
        "lodging":"杭州东站","avoidWalking":true}
 
     日期也可以传 date / endDate；date 是 startDate 的兼容别名。
@@ -226,6 +247,7 @@ def post_generate(body: dict = Body(...)):
     为什么要注册进来：生成不是终点。用户看到行程后马上要能"下雨了怎么办"，
     所以生成的计划必须和内置计划享受同一套 /event、/repair、/apply、/undo。
     """
+    _log_generate("request", body)
     interpretation = None
     text = str(body.get("text") or "").strip()
     if text:
@@ -260,19 +282,27 @@ def post_generate(body: dict = Body(...)):
             must_visit=list(body.get("mustVisit") or []),
             avoid=list(body.get("avoid") or []),
             pace=str(body.get("pace") or "normal"),
-            max_transit_min=int(body.get("maxTransitMin") or 45),
+            max_transit_min=int(body.get("maxTransitMin") or 60),
             start_place=str(body.get("startPlace") or ""),
             start_lat=float(body.get("startLat") or 0.0),
             start_lng=float(body.get("startLng") or 0.0),
             budget_per_person=int(body.get("budgetPerPerson") or 0),
-            prefer_high_rating=bool(body.get("preferHighRating") or False),
+            # AI 可能把没提到的字段填成 null；null 要按“默认开启”处理，
+            # 不能让 bool(None) 把用户默认的优先高评分悄悄关掉。
+            prefer_high_rating=(
+                True
+                if body.get("preferHighRating") is None
+                else bool(body.get("preferHighRating"))
+            ),
             lodging=str(body.get("lodging") or "").strip(),
             avoid_walking=bool(body.get("avoidWalking") or False),
             days=trip_days,
         )
         raw_plan = generate(prefs)
     except Exception as exc:  # 没配 Key / 搜不到地点 / 网络失败，都给出可读原因
-        return _error("GENERATE_FAILED", str(exc))
+        _log_generate("error", body, exc)
+        detail = str(exc).strip() or type(exc).__name__
+        return _error("GENERATE_FAILED", detail)
 
     parsed = Plan.from_dict(raw_plan)
 
@@ -756,6 +786,173 @@ def post_apply(plan_id: str, body: dict = Body(...)):
     return _ok({"plan": new_plan.to_dict(), "version": new_plan.version})
 
 
+def _commit_plan(plan_id: str, new_plan: Plan, body: dict, activity: str) -> None:
+    """保存一次用户可见的改动：版本栈 + 内存 + 落盘 + 协作记录。"""
+    new_plan.version = len(VERSIONS[plan_id]) + 1
+    PLANS[plan_id] = new_plan
+    VERSIONS[plan_id].append(new_plan.clone())
+    if (PLAN_DIR / f"{plan_id}.json").exists():
+        persist(new_plan)
+    member = COLLAB.member(plan_id, str(body.get("memberId") or "").strip())
+    if member is not None:
+        COLLAB.record(plan_id, member.id, member.name, f"{member.name} {activity}")
+
+
+def _open_close(node) -> tuple[int, int] | None:
+    """从节点的高德营业时间里取 (开门, 关门)，解析不了返回 None。"""
+    raw = str((node.poi or {}).get("openTime") or "")
+    if "-" not in raw:
+        return None
+    left, _, right = raw.partition("-")
+    open_min, close_min = parse_time(left), parse_time(right)
+    if open_min is None or close_min is None or close_min <= open_min:
+        return None
+    return open_min, close_min
+
+
+@app.post("/api/plan/{plan_id}/node/{node_id}/stay")
+def post_node_stay(plan_id: str, node_id: str, body: dict = Body(...)):
+    """调整一个地点的停留时长，并把同一天后面的站点整体顺延。
+
+    停留时长本来就是经验值，用户最有资格改。这里不做“重新生成整份计划”，
+    只改这一站和它后面的时间，避免用户改一个 30 分钟把其他地点都换掉。
+    """
+    plan = _plan_or_404(plan_id)
+    if plan is None:
+        return _error("NOT_FOUND", "计划不存在", 404)
+    conflict = _version_guard(plan, body)
+    if conflict is not None:
+        return conflict
+    node = plan.find(node_id)
+    if node is None:
+        return _error("NOT_FOUND", "节点不存在", 404)
+    # 只有真实 POI 才能调停留：集合点、交通段、过夜占位都没有“游玩时长”概念。
+    if node.overnight or not node.poi or node.type not in {"place", "reservation"}:
+        return _error("BAD_NODE", "这一站不是可调整停留的景点/餐厅")
+    try:
+        minutes = int(body.get("minutes"))
+    except (TypeError, ValueError):
+        return _error("BAD_MINUTES", "停留时长必须是整数分钟")
+    minutes = max(15, min(480, minutes))
+    if minutes == node.duration:
+        return _ok({"plan": plan.to_dict(), "version": plan.version, "changed": False})
+
+    new_end = node.start + minutes
+    window = _open_close(node)
+    if window is not None and new_end > window[1]:
+        return _error(
+            "CLOSED",
+            f"按高德营业时间 {window[0] // 60:02d}:{window[0] % 60:02d}–"
+            f"{window[1] // 60:02d}:{window[1] % 60:02d}，停留 {minutes} 分钟会超过打烊时间",
+        )
+
+    working = plan.clone()
+    target = working.find(node_id)
+    delta = minutes - target.duration
+    old_end = target.end
+    target.end = new_end
+    if window is not None:
+        target.window_latest = window[1] - minutes
+    target.stay_basis = "用户调整"
+    if target.poi:
+        target.poi["stayMin"] = minutes
+        target.poi["stayBasis"] = "用户调整"
+
+    # 只顺延同一天、原本在这一站结束之后的节点；前面的不动。
+    for other in working.nodes:
+        if other.id == target.id or other.dropped:
+            continue
+        if (other.date or working.date) != (target.date or working.date):
+            continue
+        if other.start < old_end:
+            continue
+        other.start += delta
+        other.end += delta
+        if other.window_latest is not None:
+            other.window_latest += delta
+
+    _commit_plan(
+        plan_id,
+        working,
+        body,
+        f"把「{target.title}」停留改为 {minutes} 分钟（当天后续顺延 {delta:+d} 分钟）",
+    )
+    return _ok({"plan": working.to_dict(), "version": working.version, "changed": True})
+
+
+@app.post("/api/plan/{plan_id}/lodging")
+def post_lodging(plan_id: str, body: dict = Body(...)):
+    """生成后再填/改住宿：只改酒店节点和紧邻的两段通勤，不动白天行程。"""
+    plan = _plan_or_404(plan_id)
+    if plan is None:
+        return _error("NOT_FOUND", "计划不存在", 404)
+    conflict = _version_guard(plan, body)
+    if conflict is not None:
+        return conflict
+    name = str(body.get("lodging") or "").strip()
+    if not name:
+        return _error("BAD_LODGING", "请填写酒店名或附近地标")
+    city = str((plan.generation or {}).get("city") or "").strip()
+    if not city:
+        return _error("NO_CITY", "这份计划没有记录城市，无法按酒店重排；请重新生成")
+    poi = find_by_name(city, name)
+    if poi is None:
+        return _error("NOT_FOUND", f"在「{city}」没搜到住宿「{name}」，换个酒店名或附近地标试试")
+
+    working = plan.clone()
+    hotels = [n for n in working.nodes if n.overnight]
+    if not hotels:
+        return _error("NO_HOTEL_NODE", "这是一日行程，没有住宿节点")
+
+    for hotel in hotels:
+        night = hotel.title.split("第 ")[-1].split(" 晚")[0] if "第 " in hotel.title else ""
+        hotel.title = f"{poi.name} · 住宿" + (f"（第 {night} 晚）" if night else "")
+        hotel.place = poi.name
+        hotel.confidence = poi.data_quality()
+        hotel.poi = {
+            "name": poi.name,
+            "address": poi.address,
+            "rating": poi.rating or None,
+            "cost": poi.cost or None,
+            "openTime": poi.open_time or None,
+        }
+        hotel.source.note = "用户指定住宿，已作为第二天的出发点"
+
+        # 只重算“最后一站 → 酒店”这一段的真实通勤与到店时间。
+        edge = next(
+            (e for e in working.edges if e.dst == hotel.id and e.type in {"precedes", "requires"}),
+            None,
+        )
+        if edge is not None:
+            previous = working.find(edge.src)
+            if previous is not None:
+                route = choose_route(previous, poi, city, avoid_walking=bool(
+                    (working.generation or {}).get("avoidWalking")
+                ))
+                edge.transport = route
+                edge.min_gap = int(route.get("durationMin") or edge.min_gap or 0)
+                hotel.start = min(previous.end + edge.min_gap, 23 * 60 + 58)
+                hotel.end = 23 * 60 + 59
+
+    # 第 2 天起的“出发”节点也要跟着改成酒店名。
+    for node in working.nodes:
+        if node.id.endswith("_meet") and node.id != "d1_meet" and node.place in ("", "出发点"):
+            day = node.id.split("_")[0].lstrip("d")
+            node.title = f"{poi.name}出发（第 {day} 天）"
+            node.place = poi.name
+            node.source.note = "从昨晚的住宿出发"
+
+    working.generation = dict(working.generation or {})
+    working.generation["lodging"] = {
+        "requested": name,
+        "resolved": True,
+        "name": poi.name,
+        "place": poi.address,
+    }
+    _commit_plan(plan_id, working, body, f"把住宿改为「{poi.name}」")
+    return _ok({"plan": working.to_dict(), "version": working.version})
+
+
 @app.post("/api/plan/{plan_id}/undo")
 def post_undo(plan_id: str):
     versions = VERSIONS.get(plan_id)
@@ -768,6 +965,62 @@ def post_undo(plan_id: str):
     plan.version = len(versions)
     PLANS[plan_id] = plan
     return _ok({"plan": plan.to_dict(), "version": plan.version})
+
+
+@app.get("/api/plan/{plan_id}/undo/preview")
+def get_undo_preview(plan_id: str):
+    """撤销前先告诉用户会退回什么，而不是点一下就悄悄变了。"""
+    versions = VERSIONS.get(plan_id)
+    if not versions:
+        return _error("NOT_FOUND", "计划不存在", 404)
+    if len(versions) <= 1:
+        return _ok({
+            "canUndo": False,
+            "currentVersion": versions[0].version,
+            "targetVersion": versions[0].version,
+            "summary": "已经是这份计划最早的一版，没有可撤销的改动",
+            "changes": [],
+        })
+
+    current = versions[-1]
+    target = versions[-2]
+    changes: list[dict[str, str]] = []
+    for node in current.nodes:
+        old = target.find(node.id)
+        if old is None:
+            changes.append({"nodeId": node.id, "title": node.title, "text": "这一站会被加回计划"})
+            continue
+        if node.start != old.start or node.end != old.end:
+            changes.append({
+                "nodeId": node.id,
+                "title": old.title,
+                "text": f"时间 {format_time(node.start)}–{format_time(node.end)} → "
+                        f"{format_time(old.start)}–{format_time(old.end)}",
+                "at": old.date or target.date,
+            })
+        elif node.title != old.title or node.place != old.place:
+            changes.append({
+                "nodeId": node.id,
+                "title": node.title,
+                "text": f"「{node.title}」→「{old.title or old.place}」",
+                "at": old.date or target.date,
+            })
+    for node in target.nodes:
+        if current.find(node.id) is None and not node.dropped:
+            changes.append({"nodeId": node.id, "title": node.title, "text": "这一站会被恢复"})
+
+    summary = (
+        f"从 v{current.version} 退回 v{target.version}："
+        + (f"{len(changes)} 处会恢复" if changes else "计划内容不变，只回退版本记录")
+    )
+    return _ok({
+        "canUndo": True,
+        "currentVersion": current.version,
+        "targetVersion": target.version,
+        "summary": summary,
+        "changes": changes[:12],
+        "changeCount": len(changes),
+    })
 
 
 @app.get("/api/plan/{plan_id}/weather")

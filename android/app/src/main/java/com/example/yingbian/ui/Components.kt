@@ -104,7 +104,7 @@ fun StateBadge(state: String) {
 }
 
 @Composable
-fun NodeCard(node: PlanNode, state: String, shift: Int) {
+fun NodeCard(node: PlanNode, state: String, shift: Int, onClick: () -> Unit = {}) {
     val accent = stateColor(state)
     val overnight = node.overnight
     val hotelUnknown = overnight && node.place.isBlank()
@@ -144,7 +144,7 @@ fun NodeCard(node: PlanNode, state: String, shift: Int) {
             )
         }
         Card(
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f).clickable { onClick() },
             shape = RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(
                 containerColor = if (state == "ok") Color.White else accent.copy(alpha = 0.08f),
@@ -190,6 +190,17 @@ fun NodeCard(node: PlanNode, state: String, shift: Int) {
                     fontSize = 12.sp,
                     color = Muted,
                 )
+                if (node.selectionReason.isNotBlank() || (node.stayBasis.isNotBlank() && !overnight)) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = listOf(
+                            node.selectionReason.takeIf { it.isNotBlank() }?.let { "入选：$it" } ?: "",
+                            node.stayBasis.takeIf { it.isNotBlank() && !overnight }?.let { "停留时长：$it" } ?: "",
+                        ).filter { it.isNotBlank() }.joinToString(" · "),
+                        fontSize = 9.sp,
+                        color = Muted,
+                    )
+                }
             }
         }
     }

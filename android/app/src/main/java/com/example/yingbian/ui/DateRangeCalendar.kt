@@ -40,7 +40,7 @@ private val SelectedBlack = Color(0xFF111111)
 /** 区间中间的深灰条。 */
 private val RangeGrey = Color(0xFF4A4A4A)
 
-private const val MAX_TRIP_DAYS = 7
+private const val MAX_TRIP_DAYS = 14
 
 /**
  * 截图里的「你想去多久?」区间日历。

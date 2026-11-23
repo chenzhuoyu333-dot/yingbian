@@ -43,12 +43,12 @@ class PatrolTest(unittest.TestCase):
         result = patrol(self.demo, at("23:00"))
         self.assertFalse(result["needsAttention"], result["alerts"])
 
-    def test_tight_plan_gets_one_overall_note(self):
-        """零缓冲的计划：只说一句"今天全程没有缓冲"，不逐段唠叨"""
+    def test_tight_plan_has_no_user_visible_buffer_alert(self):
+        """缓冲是内部概念：用户界面不再出现“今天全程没有缓冲”这种提醒"""
         result = patrol(self.tight, at("10:00"))
         tight = [a for a in result["alerts"] if a["kind"] == "tight"]
-        self.assertEqual(len(tight), 1, result["alerts"])
-        self.assertIn("全程", tight[0]["title"])
+        self.assertEqual(tight, [], result["alerts"])
+        self.assertNotIn("没有缓冲", str(result))
 
     def test_alerts_sorted_by_severity(self):
         result = patrol(self.tight, at("16:50"))

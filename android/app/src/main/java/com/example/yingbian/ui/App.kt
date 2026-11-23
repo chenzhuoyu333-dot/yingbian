@@ -22,6 +22,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -49,10 +50,12 @@ import androidx.compose.ui.unit.sp
 import com.example.yingbian.data.ApiConfig
 import com.example.yingbian.data.ApiSettings
 import com.example.yingbian.data.LocationHelper
+import com.example.yingbian.data.PlanNode
 import com.example.yingbian.data.PatrolAlert
 import com.example.yingbian.data.ServerDiscovery
 import com.example.yingbian.data.createRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -71,6 +74,8 @@ fun YingBianRoot() {
     var newPlanOpen by remember { mutableStateOf(false) }
     var activityOpen by remember { mutableStateOf(false) }
     var patrolOpen by remember { mutableStateOf(false) }
+    var lodgingOpen by remember { mutableStateOf(false) }
+    var stayNode by remember { mutableStateOf<PlanNode?>(null) }
 
     /** 把一条管家提醒映射成既有的变化处理流程 */
     fun handlePatrolAlert(alert: PatrolAlert) {
@@ -139,6 +144,8 @@ fun YingBianRoot() {
         controller.loadHome()
         controller.load()
         controller.joinTrip()
+        // 打开就把天气/收口查一遍，不用等第一轮 60 秒巡检
+        controller.runPatrol()
 
         // 启动自愈：连不上就自己找后端（校园网 / 热点 / 任何 Wi-Fi 都试）
         if (!settings.useMock && controller.error != null) {
@@ -158,6 +165,18 @@ fun YingBianRoot() {
         controller.pollLoop()
     }
 
+    // 前台自动感知：有定位权限时每分钟看一次，到点提示打卡，偏离提示改行程。
+    // 不做后台定位、不上传轨迹；App 不在前台就不会跑。
+    LaunchedEffect(repoVersion) {
+        while (true) {
+            delay(60_000)
+            if (controller.plan == null || controller.loading) continue
+            if (!locationHelper.hasPermission()) continue
+            val point = withContext(Dispatchers.IO) { locationHelper.lastKnown() } ?: continue
+            controller.autoLocate(point.first, point.second)
+        }
+    }
+
     BackHandler(enabled = controller.screen != AppScreen.Plan) {
         controller.openScreen(AppScreen.Plan)
     }
@@ -173,8 +192,9 @@ fun YingBianRoot() {
                                 AppScreen.NewPlan -> "新建行程"
                                 AppScreen.Plan -> controller.plan?.title ?: "应变"
                                 AppScreen.Scheme -> "两套方案对比"
-                                AppScreen.Notify -> "通知预览"
+                                AppScreen.Notify -> "提醒"
                                 AppScreen.Todo -> "待办清单"
+                                AppScreen.Profile -> "我的"
                             },
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
@@ -201,7 +221,7 @@ fun YingBianRoot() {
                         Icon(Icons.Default.Add, contentDescription = "新建行程")
                     }
                     if ((controller.plan?.version ?: 1) > 1) {
-                        TextButton(onClick = { scope.launch { controller.undo() } }) {
+                        TextButton(onClick = { scope.launch { controller.requestUndo() } }) {
                             Text("撤销", fontSize = 13.sp)
                         }
                     }
@@ -213,7 +233,12 @@ fun YingBianRoot() {
         },
         bottomBar = {
             NavigationBar {
-                AppScreen.entries.filter { it != AppScreen.NewPlan }.forEach { screen ->
+                listOf(
+                    AppScreen.Home,
+                    AppScreen.Plan,
+                    AppScreen.Notify,
+                    AppScreen.Profile,
+                ).forEach { screen ->
                     NavigationBarItem(
                         selected = controller.screen == screen,
                         onClick = { controller.openScreen(screen) },
@@ -245,6 +270,21 @@ fun YingBianRoot() {
                         onDelete = { id -> scope.launch { controller.removePlan(id) } },
                     )
 
+                    controller.screen == AppScreen.Profile -> ProfileScreen(
+                        memberName = settings.memberName,
+                        memberId = settings.memberId,
+                        baseUrl = settings.baseUrl,
+                        useMock = settings.useMock,
+                        memberCount = controller.members.size,
+                        planTitle = controller.plan?.title.orEmpty(),
+                        onRename = { name ->
+                            settings.memberName = name
+                            repoVersion += 1
+                        },
+                        onOpenSettings = { settingsOpen = true },
+                        onOpenDebug = { debugOpen = true },
+                    )
+
                     controller.plan == null -> LoadingScreen()
                     else -> {
                         val plan = controller.plan!!
@@ -259,10 +299,10 @@ fun YingBianRoot() {
                                 onLocate = {
                                     withContext(Dispatchers.IO) { locationHelper.lastKnown() }
                                 },
-                                onCreate = { city, start, end, text, place, lat, lng ->
+                                onCreate = { city, start, end, text, place, lat, lng, lodging, pace, maxTransit ->
                                     scope.launch {
                                         controller.createTrip(
-                                            city, start, end, text, place, lat, lng,
+                                            city, start, end, text, place, lat, lng, lodging, pace, maxTransit,
                                         )
                                         val note = controller.generateNote
                                         if (!note.isNullOrBlank()) {
@@ -310,6 +350,11 @@ fun YingBianRoot() {
                                 onDismissPatrol = { controller.dismissPatrol() },
                                 memberCount = controller.members.size,
                                 voteOpen = controller.vote?.isOpen == true,
+                                onEditLodging = { lodgingOpen = true },
+                                onAdjustStay = { node ->
+                                    if (node.stayBasis.isNotBlank()) stayNode = node
+                                    else Toast.makeText(context, "这一站没有可调停留信息", Toast.LENGTH_SHORT).show()
+                                },
                             )
 
                             AppScreen.Scheme -> SchemeScreen(
@@ -323,9 +368,9 @@ fun YingBianRoot() {
 
                             AppScreen.Notify -> NotifyScreen(
                                 notifications = controller.notifications,
-                                selection = controller.notificationSelection,
-                                onToggle = { controller.toggleNotification(it) },
-                                onConfirm = { controller.confirmNotifications() },
+                                onCall = { callNotification(context, it) },
+                                onCopy = { copyNotification(context, it) },
+                                onBack = { controller.openScreen(AppScreen.Plan) },
                             )
 
                             AppScreen.Todo -> TodoScreen(
@@ -337,6 +382,21 @@ fun YingBianRoot() {
                                 onCompleteAll = { controller.completeAllTodos() },
                                 onBack = { controller.openScreen(AppScreen.Plan) },
                             )
+
+                            AppScreen.Profile -> ProfileScreen(
+                                memberName = settings.memberName,
+                                memberId = settings.memberId,
+                                baseUrl = settings.baseUrl,
+                                useMock = settings.useMock,
+                                memberCount = controller.members.size,
+                                planTitle = plan.title,
+                                onRename = { name ->
+                                    settings.memberName = name
+                                    repoVersion += 1
+                                },
+                                onOpenSettings = { settingsOpen = true },
+                                onOpenDebug = { debugOpen = true },
+                            )
                         }
                     }
                 }
@@ -346,6 +406,55 @@ fun YingBianRoot() {
 
     val currentPlan = controller.plan
     val currentImpact = controller.impact
+    if (controller.undoPreviewOpen) {
+        UndoDialog(
+            preview = controller.undoPreview,
+            onConfirm = {
+                scope.launch {
+                    controller.undo()
+                    Toast.makeText(context, "已撤销到上一版", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onDismiss = { controller.cancelUndo() },
+        )
+    }
+    controller.autoPrompt?.let { result ->
+        AutoLocateDialog(
+            result = result,
+            onCheckin = {
+                controller.dismissAutoPrompt()
+                controller.openCheckin()
+            },
+            onFix = { controller.openAutoPromptFix() },
+            onDismiss = { controller.dismissAutoPrompt() },
+        )
+    }
+    controller.autoWeatherAlert?.let { alert ->
+        WeatherChangeDialog(
+            alert = alert,
+            onFix = {
+                controller.dismissAutoWeather()
+                handlePatrolAlert(alert)
+            },
+            onDismiss = { controller.dismissAutoWeather() },
+        )
+    }
+    if (controller.schemeSheetOpen && currentPlan != null) {
+        SchemeSheet(
+            plan = currentPlan,
+            schemes = controller.schemes,
+            selectedId = controller.selectedSchemeId,
+            loading = controller.loading,
+            onSelect = { controller.selectScheme(it) },
+            onApply = {
+                scope.launch {
+                    controller.applySelected()
+                    Toast.makeText(context, "已采用方案", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onDismiss = { controller.closeSchemes() },
+        )
+    }
     if (controller.showImpact && currentPlan != null && currentImpact != null) {
         ImpactSheet(
             plan = currentPlan,
@@ -398,6 +507,46 @@ fun YingBianRoot() {
         )
     }
 
+    if (lodgingOpen && currentPlan != null) {
+        LodgingDialog(
+            initial = currentPlan.nodes.firstOrNull { it.overnight }?.place.orEmpty(),
+            busy = controller.loading,
+            onSave = { name ->
+                scope.launch {
+                    controller.updateLodging(name)
+                    if (controller.error == null) {
+                        lodgingOpen = false
+                        controller.generateNote?.let {
+                            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+                            controller.clearGenerateNote()
+                        }
+                    }
+                }
+            },
+            onDismiss = { lodgingOpen = false },
+        )
+    }
+
+    stayNode?.let { node ->
+        StayDialog(
+            node = node,
+            busy = controller.loading,
+            onSave = { minutes ->
+                scope.launch {
+                    controller.updateStay(node.id, minutes)
+                    if (controller.error == null) {
+                        stayNode = null
+                        controller.generateNote?.let {
+                            Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
+                            controller.clearGenerateNote()
+                        }
+                    }
+                }
+            },
+            onDismiss = { stayNode = null },
+        )
+    }
+
     controller.locateResult?.let { result ->
         LocateDialog(
             result = result,
@@ -428,7 +577,7 @@ fun YingBianRoot() {
 
     if (activityOpen) {
         ActivityDialog(
-            rows = controller.activityRows,
+            rows = controller.timelineRows,
             members = controller.members,
             onDismiss = { activityOpen = false },
         )
@@ -505,6 +654,7 @@ private fun screenIcon(screen: AppScreen): ImageVector = when (screen) {
     AppScreen.Scheme -> Icons.Default.List
     AppScreen.Notify -> Icons.Default.Notifications
     AppScreen.Todo -> Icons.Default.CheckCircle
+    AppScreen.Profile -> Icons.Default.Person
 }
 
 private fun call(context: Context, item: TodoRow) {
@@ -514,6 +664,19 @@ private fun call(context: Context, item: TodoRow) {
 }
 
 private fun copyScript(context: Context, item: TodoRow) {
+    val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    manager.setPrimaryClip(ClipData.newPlainText("话术", item.script))
+    Toast.makeText(context, "话术已复制", Toast.LENGTH_SHORT).show()
+}
+
+private fun callNotification(context: Context, item: NotificationRow) {
+    if (item.phone.isBlank()) return
+    runCatching {
+        context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${item.phone}")))
+    }
+}
+
+private fun copyNotification(context: Context, item: NotificationRow) {
     val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     manager.setPrimaryClip(ClipData.newPlainText("话术", item.script))
     Toast.makeText(context, "话术已复制", Toast.LENGTH_SHORT).show()

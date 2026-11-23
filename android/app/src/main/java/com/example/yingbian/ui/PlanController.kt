@@ -15,19 +15,25 @@ import com.example.yingbian.data.Plan
 import com.example.yingbian.data.PlanRepository
 import com.example.yingbian.data.PlanSummary
 import com.example.yingbian.data.PatrolResult
+import com.example.yingbian.data.PatrolAlert
 import com.example.yingbian.data.Province
 import com.example.yingbian.data.RepairAction
 import com.example.yingbian.data.RepairScheme
+import com.example.yingbian.data.UndoPreview
 import com.example.yingbian.data.VoteState
 import com.example.yingbian.data.Weather
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 enum class AppScreen(val label: String) {
     Home("计划"),
     NewPlan("新建"),
     Plan("行程"),
     Scheme("方案"),
-    Notify("通知"),
+    Notify("提醒"),
     Todo("待办"),
+    Profile("我的"),
 }
 
 data class NotificationRow(
@@ -36,6 +42,10 @@ data class NotificationRow(
     val text: String,
     val level: String,
     val person: String,
+    /** auto：App 内成员自动收到；assist：需要你点一下打电话/发消息；info：只读知会 */
+    val kind: String = "info",
+    val phone: String = "",
+    val script: String = "",
 )
 
 data class TodoRow(
@@ -56,6 +66,9 @@ class PlanController(
     var schemes by mutableStateOf<List<RepairScheme>>(emptyList())
         private set
     var selectedSchemeId by mutableStateOf<String?>(null)
+        private set
+    /** 方案不再占一个页面：需要改行程时从底部弹出，关掉就回行程 */
+    var schemeSheetOpen by mutableStateOf(false)
         private set
     var weather by mutableStateOf<Weather?>(null)
         private set
@@ -106,6 +119,11 @@ class PlanController(
     /** 生成后的提示（例如"必去点排不进去"），界面上用 Toast 或角标展示 */
     var generateNote by mutableStateOf<String?>(null)
         private set
+    /** 撤销确认：先展示会退回哪一版、改了什么，用户确认后才真的撤销 */
+    var undoPreview by mutableStateOf<UndoPreview?>(null)
+        private set
+    var undoPreviewOpen by mutableStateOf(false)
+        private set
 
     // ── 多人协作 ──────────────────────────────────
     var members by mutableStateOf<List<MemberInfo>>(emptyList())
@@ -114,6 +132,11 @@ class PlanController(
         private set
     var activityRows by mutableStateOf<List<ActivityRow>>(emptyList())
         private set
+    /** 单人模式也能看到的本地时间线：生成、打卡、采用方案、撤销、处理天气 */
+    var localTimeline by mutableStateOf<List<ActivityRow>>(emptyList())
+        private set
+    val timelineRows: List<ActivityRow>
+        get() = (localTimeline + activityRows).sortedBy { it.at }
     /** 别人改了计划时给个提示，让用户知道"这不是我改的" */
     var remoteChanged by mutableStateOf(false)
         private set
@@ -124,15 +147,32 @@ class PlanController(
     var patrolDismissed by mutableStateOf(false)
         private set
     private var patrolTick = 0
+    /** 天气真的会影响行程时，自动弹一次；同一场雨不反复弹 */
+    var autoWeatherAlert by mutableStateOf<PatrolAlert?>(null)
+        private set
+    private var lastWeatherAlertKey: String = ""
 
     /** 定位检查结果：我在哪、计划该在哪、落后多少、能怎么改 */
     var locateResult by mutableStateOf<LocateResult?>(null)
         private set
     var locateLoading by mutableStateOf(false)
         private set
+    /** 前台自动定位发现的“到了/落后了”，用弹窗提醒，不需要用户主动点 */
+    var autoPrompt by mutableStateOf<LocateResult?>(null)
+        private set
+    private var autoPromptKey: String = ""
 
     val memberName: String
         get() = settings?.memberName ?: "我"
+
+    private fun record(text: String, name: String? = null) {
+        val at = SimpleDateFormat("HH:mm", Locale.CHINA).format(Date())
+        localTimeline = localTimeline + ActivityRow(
+            at = at,
+            name = name ?: memberName,
+            text = text,
+        )
+    }
 
     /** 进入行程时登记自己（幂等），并拉一次协作状态 */
     suspend fun joinTrip() {
@@ -221,6 +261,34 @@ class PlanController(
     }
 
     /**
+     * 前台自动检查：只在本机有定位权限时调用。
+     * 到了目标点就提示打卡；落后超过容差就提示“要不要改行程”。
+     * 同一个节点只提醒一次，避免每分钟弹同一句话。
+     */
+    suspend fun autoLocate(lat: Double, lng: Double, now: String? = null) {
+        val result = runCatching { repo.locate(lat, lng, now) }.getOrNull() ?: return
+        if (!result.arrived && !result.isBehind) return
+        val key = if (result.arrived) "arrive:${result.atNodeId}" else "behind:${result.driftMinutes / 10}"
+        if (key == autoPromptKey) return
+        autoPromptKey = key
+        autoPrompt = result
+        record(
+            if (result.arrived) "定位到「${result.atNodeTitle}」，提示打卡"
+            else "定位发现落后 ${result.driftMinutes} 分钟，提示改行程"
+        )
+    }
+
+    fun dismissAutoPrompt() {
+        autoPrompt = null
+    }
+
+    /** 用户在自动提醒里点“看看怎么改”：把同一条结果接到已有的方案弹窗 */
+    fun openAutoPromptFix() {
+        locateResult = autoPrompt
+        autoPrompt = null
+    }
+
+    /**
      * 主动巡检：不打扰地跑一遍，只有真有事才在界面上提示。
      * 界面上"知道了"之后本轮不再打扰（patrolDismissed），
      * 但下一次真正的变化仍会重新提醒。
@@ -232,11 +300,24 @@ class PlanController(
                 val changed = result.summary != patrolResult?.summary
                 patrolResult = result
                 if (changed) patrolDismissed = false
+                val weather = result.alerts.firstOrNull { it.kind == "weather" }
+                if (weather != null && result.needsAttention) {
+                    val key = "${weather.nodeId}|${weather.detail}|${weather.title}"
+                    if (key != lastWeatherAlertKey) {
+                        lastWeatherAlertKey = key
+                        autoWeatherAlert = weather
+                        record("发现天气影响行程：${weather.title}")
+                    }
+                }
             }
     }
 
     fun dismissPatrol() {
         patrolDismissed = true
+    }
+
+    fun dismissAutoWeather() {
+        autoWeatherAlert = null
     }
 
     /** 采用定位检查给出的某个方案：直接打给后端并刷新界面 */
@@ -247,6 +328,7 @@ class PlanController(
         try {
             val updated = repo.applyScheme(scheme)
             plan = updated
+            record("采用了方案「${scheme.label}」")
             planBeforeApply = base
             lastScheme = scheme
             notifications = buildNotifications(scheme, base)
@@ -297,6 +379,9 @@ class PlanController(
         startPlace: String = "",
         startLat: Double? = null,
         startLng: Double? = null,
+        lodging: String = "",
+        pace: String = "normal",
+        maxTransitMin: Int = 60,
     ) {
         loading = true
         error = null
@@ -310,7 +395,12 @@ class PlanController(
                 startPlace = startPlace.ifBlank { null },
                 startLat = startLat,
                 startLng = startLng,
+                lodging = lodging,
+                pace = pace,
+                maxTransitMin = maxTransitMin,
             )
+            localTimeline = emptyList()
+            record("生成了 ${plan?.days ?: 1} 天、${plan?.nodes?.size ?: 0} 个地点的行程")
             impact = null
             schemes = emptyList()
             selectedSchemeId = null
@@ -398,6 +488,8 @@ class PlanController(
         error = null
         try {
             plan = repo.openPlan(planId)
+            localTimeline = emptyList()
+            record("打开了行程「${plan?.title.orEmpty()}」")
             impact = null
             schemes = emptyList()
             selectedSchemeId = null
@@ -557,7 +649,7 @@ class PlanController(
             } else {
                 schemes = result.schemes
                 selectedSchemeId = result.schemes.firstOrNull()?.id
-                screen = AppScreen.Scheme
+                schemeSheetOpen = true
             }
         } catch (exception: Exception) {
             error = exception.message ?: "生成方案失败"
@@ -574,6 +666,7 @@ class PlanController(
         try {
             val updated = repo.applyScheme(scheme)
             plan = updated
+            record("采用了方案「${scheme.label}」")
             planBeforeApply = base
             lastScheme = scheme
             notifications = buildNotifications(scheme, base)
@@ -583,6 +676,7 @@ class PlanController(
             impact = null
             schemes = emptyList()
             selectedSchemeId = null
+            schemeSheetOpen = false
             screen = AppScreen.Notify
             scenario = DemoScenario.RAIN
         } catch (exception: Exception) {
@@ -613,6 +707,11 @@ class PlanController(
             val result = repo.checkin(nodeId, minutes, personId)
             checkinResult = result
             checkinSelectedId = result.schemes.firstOrNull()?.id
+            val title = plan?.node(nodeId)?.title ?: nodeId
+            record(
+                if (result.schemes.isEmpty()) "在「$title」打卡，时间正好"
+                else "在「$title」打卡，晚到 ${result.minutes} 分钟"
+            )
         } catch (exception: Exception) {
             checkinError = exception.message ?: "打卡失败"
         } finally {
@@ -633,6 +732,7 @@ class PlanController(
         try {
             val updated = repo.applyScheme(scheme)
             plan = updated
+            record("采用了方案「${scheme.label}」")
             planBeforeApply = base
             lastScheme = scheme
             notifications = buildNotifications(scheme, base)
@@ -654,12 +754,62 @@ class PlanController(
         }
     }
 
+    suspend fun requestUndo() {
+        loading = true
+        error = null
+        try {
+            undoPreview = repo.undoPreview()
+            undoPreviewOpen = true
+        } catch (exception: Exception) {
+            error = exception.message ?: "读取撤销预览失败"
+        } finally {
+            loading = false
+        }
+    }
+
+    fun cancelUndo() {
+        undoPreviewOpen = false
+        undoPreview = null
+    }
+
+    suspend fun updateLodging(lodging: String) {
+        loading = true
+        error = null
+        try {
+            plan = repo.updateLodging(lodging)
+            record("住宿改为「$lodging」")
+            generateNote = "住宿已改为 $lodging"
+        } catch (exception: Exception) {
+            error = exception.message ?: "修改住宿失败"
+        } finally {
+            loading = false
+        }
+    }
+
+    suspend fun updateStay(nodeId: String, minutes: Int) {
+        loading = true
+        error = null
+        try {
+            val title = plan?.node(nodeId)?.title ?: nodeId
+            plan = repo.updateStay(nodeId, minutes)
+            record("把「$title」的停留改为 $minutes 分钟")
+            generateNote = "停留已改为 $minutes 分钟，后面的站点已顺延"
+        } catch (exception: Exception) {
+            error = exception.message ?: "调整停留失败"
+        } finally {
+            loading = false
+        }
+    }
+
     suspend fun undo() {
+        undoPreviewOpen = false
+        undoPreview = null
         loading = true
         error = null
         clearCheckin()
         try {
             plan = repo.undo()
+            record("撤销回到 v${plan?.version ?: 1}")
             impact = null
             schemes = emptyList()
             selectedSchemeId = null
@@ -731,6 +881,12 @@ class PlanController(
 
     fun selectScheme(id: String) {
         selectedSchemeId = id
+    }
+
+    fun closeSchemes() {
+        schemeSheetOpen = false
+        schemes = emptyList()
+        selectedSchemeId = null
     }
 
     fun openScreen(target: AppScreen) {
@@ -830,35 +986,49 @@ class PlanController(
         }
     }
 
-    private fun buildNotifications(scheme: RepairScheme, currentPlan: Plan): List<NotificationRow> =
-        scheme.actions.mapIndexed { index, action ->
-            val node = currentPlan.node(action.nodeId)
-            val fromTitle = action.payload["fromTitle"] ?: node?.title ?: action.nodeId
-            val toTitle = action.payload["toTitle"] ?: "新地点"
-            val text = when (action.action) {
-                "replace" -> "$fromTitle 已改去「$toTitle」"
-                "drop" -> "$fromTitle 已取消"
-                "trim" -> "$fromTitle 停留缩短 ${action.payload["minutes"] ?: "0"} 分钟"
-                else -> "$fromTitle 后移 ${action.payload["minutes"] ?: "0"} 分钟"
-            }
-            val level = when {
-                action.action == "drop" -> "打断"
-                action.action == "replace" && node?.type == "reservation" -> "打断"
-                else -> "知会"
-            }
-            val person = if (action.action == "replace" && !node?.contact.isNullOrBlank()) {
-                "餐厅 / 场馆"
-            } else {
-                "同行 4 人"
-            }
-            NotificationRow(
-                id = index.toString(),
-                title = fromTitle,
-                text = text,
-                level = level,
-                person = person,
-            )
+    private fun actionText(action: RepairAction, plan: Plan): String {
+        val node = plan.node(action.nodeId)
+        val title = action.payload["fromTitle"] ?: node?.title ?: action.nodeId
+        val minutes = action.payload["minutes"] ?: "0"
+        return when (action.action) {
+            "shift_all" -> "后面 ${action.payload["count"] ?: "多"} 站一起顺延 $minutes 分钟"
+            "replace" -> "$title 改去「${action.payload["toTitle"] ?: "新地点"}」"
+            "drop" -> "$title 取消"
+            "trim" -> "$title 停留缩短 $minutes 分钟"
+            else -> "$title 后移 $minutes 分钟"
         }
+    }
+
+    /**
+     * 一个事件只产生一条行动项。
+     *
+     * 同一件事不再同时进“通知”和“待办”两个列表：
+     *   auto   → App 内成员自动收到，不需要你操作
+     *   assist → 需要你点一下（打电话/发消息）才能通知到外部对象
+     *   info   → 只读知会
+     */
+    private fun buildNotifications(scheme: RepairScheme, currentPlan: Plan): List<NotificationRow> {
+        val contact = scheme.actions.firstNotNullOfOrNull { action ->
+            currentPlan.node(action.nodeId)?.contact?.takeIf { it.isNotBlank() }
+        }
+        val needsManual = scheme.actions.any {
+            it.action == "replace" && !currentPlan.node(it.nodeId)?.contact.isNullOrBlank()
+        }
+        val detail = scheme.actions.joinToString("；") { actionText(it, currentPlan) }
+            .ifBlank { "行程有调整" }
+        return listOf(
+            NotificationRow(
+                id = "scheme_${scheme.id}",
+                title = "行程已调整：${scheme.label}",
+                text = detail,
+                level = if (scheme.actions.any { it.action == "drop" }) "打断" else "知会",
+                person = if (needsManual) "餐厅 / 场馆" else "同行成员",
+                kind = if (needsManual) "assist" else if (scheme.actions.isEmpty()) "info" else "auto",
+                phone = contact.orEmpty(),
+                script = "我们行程有调整：$detail。和你说一声，别白跑一趟。",
+            )
+        )
+    }
 
     private fun buildTodos(
         scheme: RepairScheme,

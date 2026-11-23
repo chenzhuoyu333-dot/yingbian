@@ -117,7 +117,7 @@ class MultiDayTest(unittest.TestCase):
     def test_days_clamped(self):
         plan = generate(Preferences(city="杭州", interests=["景点"], days=99, max_transit_min=45))
         hotels = [n for n in plan["nodes"] if "hotel" in n["id"]]
-        self.assertLessEqual(len(hotels), 6, "天数应被限制在 7 天以内（最多 6 晚住宿）")
+        self.assertLessEqual(len(hotels), 13, "天数应被限制在 14 天以内（最多 13 晚住宿）")
 
     def test_lodging_anchor_drives_next_day(self):
         """填了住哪儿：当晚回酒店，第二天从酒店出发，通勤按真实路径算。"""

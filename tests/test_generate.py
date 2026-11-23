@@ -86,7 +86,8 @@ class GenerateTest(unittest.TestCase):
         patch.stopall()
 
     def _generate(self, **kw):
-        prefs = Preferences(city="杭州", interests=["景点", "公园", "咖啡"], **kw)
+        kw.setdefault("interests", ["景点", "公园", "咖啡"])
+        prefs = Preferences(city="杭州", **kw)
         return generate(prefs)
 
     def test_plan_is_parseable(self):
@@ -167,20 +168,53 @@ class GenerateTest(unittest.TestCase):
             f"必去点没排进去却没提示：{gen['warnings']}",
         )
 
-    def test_transit_limit_filters_far_points(self):
+    def test_transit_limit_filters_far_points_without_failing(self):
         """
-        通勤上限压到 0：除必去点外都排不进来 → 节点不足 3 个 → 明确报错，
-        而不是悄悄返回一个只有集合点的残缺计划。
+        通勤上限压到 0：普通点排不进来，但必去点仍保留；
+        点少只写警告，不能因为“不到 3 个点”直接加载失败。
         """
-        with self.assertRaises(RuntimeError) as ctx:
-            self._generate(max_transit_min=0, must_visit=["鼓楼"])
-        self.assertIn("不到 3 个点", str(ctx.exception))
+        plan = self._generate(max_transit_min=0, must_visit=["鼓楼"])
+        titles = [n["title"] for n in plan["nodes"]]
+        self.assertIn("鼓楼", titles)
+        warnings = plan["generation"]["warnings"]
+        self.assertTrue(any("只排到" in w for w in warnings), warnings)
 
         # 正常上限下，普通点会进来，而且必去点仍在
         plan = self._generate(must_visit=["鼓楼"])
         titles = [n["title"] for n in plan["nodes"]]
         self.assertIn("鼓楼", titles)
         self.assertGreaterEqual(len(titles), 3)
+
+    def test_cafe_is_filtered_unless_user_asks(self):
+        """默认不提咖啡：候选池里的咖啡馆必须被过滤掉。"""
+        plan = self._generate(interests=["景点", "公园", "博物馆"])
+        titles = [n["title"] for n in plan["nodes"]]
+        self.assertNotIn("转角咖啡", titles)
+
+        plan = self._generate(interests=["咖啡"])
+        titles = [n["title"] for n in plan["nodes"]]
+        self.assertIn("转角咖啡", titles)
+
+    def test_city_must_see_points_are_marked_and_prioritized(self):
+        """城市必看池要真的进入计划，并且能解释“为什么有这一站”。"""
+        plan = self._generate(interests=["景点", "公园", "博物馆"])
+        pool = plan["generation"]["mustSeePool"]
+        self.assertTrue(pool, "5A/风景名胜命中的点没有被标记为城市必看")
+        reasons = [node.get("selectionReason") for node in plan["nodes"]]
+        self.assertIn("城市必看", reasons)
+        visited = plan["generation"]["mustSeeVisited"]
+        self.assertTrue(visited, "城市必看池有点，但一个都没排进行程")
+
+    def test_far_start_point_falls_back_to_city_center(self):
+        """人在外地却用当前定位当出发点：退回市区起点并提示，而不是直接生成失败。"""
+        plan = self._generate(
+            start_lat=39.9042,
+            start_lng=116.4074,
+            start_place="我的位置",
+        )
+        warnings = plan["generation"]["warnings"]
+        self.assertTrue(any("公里" in w for w in warnings), warnings)
+        self.assertGreaterEqual(len(plan["nodes"]), 3)
 
     def test_missing_key_raises(self):
         with patch.dict(os.environ, {"AMAP_KEY": ""}):

@@ -280,6 +280,8 @@ def locate(plan: Plan, lat: float, lng: float, now_minutes: int) -> dict[str, An
         "atNodeId": node.id,
         "atNodeTitle": node.title,
         "atDistanceM": distance,
+        # 就在当前目标点旁边 → 可以直接提示“到了，打卡吗？”
+        "arrived": distance <= 250 and node.id == should.id,
         "shouldNodeId": should.id,
         "shouldNodeTitle": should.title,
         "shouldStart": should.start,

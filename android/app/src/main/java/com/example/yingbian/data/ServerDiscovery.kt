@@ -152,7 +152,7 @@ object ServerDiscovery {
                 if (found.get() != null) return@forEach
                 chunk.map { ip ->
                     async(Dispatchers.IO) {
-                        if (found.get() == null && probe(ip, port, timeoutMs = 250)) {
+                        if (found.get() == null && probe(ip, port, timeoutMs = 500)) {
                             found.compareAndSet(null, "http://$ip:$port")
                         }
                     }
@@ -209,7 +209,12 @@ object ServerDiscovery {
         if (octets.size != 4) return emptyList()
 
         if (sameSlash24Only) {
-            return (1..254).map { "${octets[0]}.${octets[1]}.${octets[2]}.$it" }
+            // 从自己附近往外扫：电脑和手机通常在相近的地址上，
+            // 比从 .1 顺序扫更快命中，弱网也不会先耗完时间。
+            val own = octets[3]
+            return (1..254)
+                .sortedBy { kotlin.math.abs(it - own) }
+                .map { "${octets[0]}.${octets[1]}.${octets[2]}.$it" }
                 .filter { it != net.ip }
         }
 
@@ -242,17 +247,18 @@ object ServerDiscovery {
         return host.takeIf { it.isNotBlank() }
     }
 
-    private fun probe(ip: String, port: Int, timeoutMs: Int = 300): Boolean {
+    private fun probe(ip: String, port: Int, timeoutMs: Int = 500): Boolean {
         var connection: HttpURLConnection? = null
         return try {
-            connection = (URL("http://$ip:$port/api/plans").openConnection() as HttpURLConnection).apply {
+            // 用轻量探针，不拉整份计划列表；弱网下响应体越小越容易成功。
+            connection = (URL("http://$ip:$port/api/netinfo").openConnection() as HttpURLConnection).apply {
                 connectTimeout = timeoutMs
                 readTimeout = timeoutMs
                 requestMethod = "GET"
             }
             if (connection.responseCode != 200) return false
             val text = connection.inputStream.bufferedReader().use { it.readText() }
-            text.contains("\"plans\"")
+            text.contains("\"ok\"") || text.contains("\"lan\"")
         } catch (_: Exception) {
             false
         } finally {

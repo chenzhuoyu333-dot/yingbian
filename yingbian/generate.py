@@ -27,11 +27,14 @@ from .env import key
 from .models import Plan, format_time, parse_time
 from .poi import (
     DEFAULT_INTERESTS,
+    MAX_PER_KEYWORD,
     Poi,
     choose_route,
+    distance_m,
     find_by_name,
     route_plan,
     search_interests,
+    search_keyword,
     travel_minutes,
 )
 from .propagate import Event, propagate
@@ -54,6 +57,14 @@ MAX_PER_CATEGORY = {
 # 只按 category 限会被绕过 —— 一家咖啡店如果 type 缺"咖啡"字样就会被归成 food。
 MAX_PER_GROUP = {"eat": 3, "shop": 1, "sight": 4}
 
+# 城市必看池：用户说"想去长沙玩四天"时，不该只排到小店和普通公园。
+# 这两个关键词能拿到城市里真正的招牌景点，只用来标记优先级，
+# 不改变用户偏好本身 —— 偏好负责加减，城市必看负责兜底。
+CORE_SEARCH_WORDS = ["5A景区", "风景名胜"]
+# 每天至少安排几个城市必看点；同时最多 3 个，避免一天全被大景点占满。
+CORE_PER_DAY_MIN = 2
+CORE_PER_DAY_MAX = 3
+
 
 def _group(category: str) -> str:
     if category in ("cafe", "food"):
@@ -73,7 +84,7 @@ class Preferences:
     must_visit: list[str] = field(default_factory=list)
     avoid: list[str] = field(default_factory=list)
     pace: str = "normal"
-    max_transit_min: int = 45
+    max_transit_min: int = 60
     start_place: str = ""
     # 出发点坐标（用户在新建页"用当前定位"时传进来）
     start_lat: float = 0.0
@@ -84,7 +95,8 @@ class Preferences:
     avoid_walking: bool = False
     # 由 AI 从"人均 100 以内""想去评价好的"这类话里解析出来
     budget_per_person: int = 0      # 0 表示不限
-    prefer_high_rating: bool = False
+    # 默认就优先高评分，但不硬性排除没有评分的地点（小店/公园常常没有数据）。
+    prefer_high_rating: bool = True
     # 住宿：用户指定的酒店名或区域；空表示待定
     lodging: str = ""
 
@@ -94,11 +106,70 @@ def _blocked(poi: Poi, avoid: list[str]) -> bool:
     return any(word and word in haystack for word in avoid)
 
 
-def _pick_origin(prefs: Preferences, candidates: list[Poi]) -> Poi:
-    """起点：优先按用户给的起点名检索，否则用候选池的地理中心造一个虚拟起点"""
-    # 优先用坐标（最准，且不需要检索）
+def _city_center(candidates: list[Poi]) -> Poi | None:
+    if not candidates:
+        return None
+    lng = sum(p.lng for p in candidates) / len(candidates)
+    lat = sum(p.lat for p in candidates) / len(candidates)
+    return Poi(
+        id="poi_origin",
+        # 不谎称"市中心"：用户没指定出发点，就老实叫"出发点"
+        name="出发点",
+        category="sight",
+        indoor=True,
+        lng=lng,
+        lat=lat,
+        stay_min=0,
+        type_text="虚拟起点",
+    )
+
+
+def _transit_times(
+    start: Poi,
+    candidates: list[Poi],
+    exempt_names: set[str],
+) -> list[int]:
+    """从 start 到各候选点的预估通勤分钟数，已排序；必去点单独豁免。"""
+    times: list[int] = []
+    for poi in candidates:
+        if poi.name in exempt_names:
+            continue
+        try:
+            times.append(travel_minutes(start, poi))
+        except Exception:
+            continue
+    times.sort()
+    return times
+
+
+def _first_leg_limit(
+    start: Poi,
+    candidates: list[Poi],
+    configured: int,
+    exempt_names: set[str],
+) -> int:
+    """首段通勤上限：按最近 3 个点单独放宽，最多 120 分钟。"""
+    times = _transit_times(start, candidates, exempt_names)
+    if not times:
+        return configured
+    third = times[min(2, len(times) - 1)]
+    return max(configured, min(120, third + 10))
+
+
+def _pick_origin(
+    prefs: Preferences,
+    candidates: list[Poi],
+    warnings: list[str] | None = None,
+    must_pois: list[Poi] | None = None,
+) -> Poi:
+    """起点：优先用用户给的坐标/地点；只有跨城或搜不到时才退回市区中心。"""
+    center = _city_center(candidates)
+    exempt_names = {p.name for p in (must_pois or [])}
+    start: Poi | None = None
+    label = ""
+
     if prefs.start_lat and prefs.start_lng:
-        return Poi(
+        start = Poi(
             id="poi_origin",
             name=prefs.start_place or "我的位置",
             category="sight",
@@ -107,30 +178,50 @@ def _pick_origin(prefs: Preferences, candidates: list[Poi]) -> Poi:
             lat=prefs.start_lat,
             stay_min=0,
         )
+        label = prefs.start_place or "当前定位"
+        if center is not None:
+            distance_km = distance_m(start, center) / 1000
+            # 人在北京、行程排杭州时，跨城段本来就不由这份行程负责。
+            if distance_km > 80:
+                if warnings is not None:
+                    warnings.append(
+                        f"你选的出发点离「{prefs.city}」约 {distance_km:.0f} 公里，"
+                        "已按市区默认出发点排；跨城交通请单独安排"
+                    )
+                return center
+    elif prefs.start_place:
+        label = prefs.start_place
+        start = find_by_name(prefs.city, prefs.start_place)
+        if start is None and warnings is not None:
+            warnings.append(
+                f"出发点「{prefs.start_place}」没搜到，已按{prefs.city}市区默认出发点排"
+            )
 
-    if prefs.start_place:
-        found = find_by_name(prefs.city, prefs.start_place)
-        if found:
-            return found
+    if start is None:
+        if center is not None:
+            return center
+        return Poi(
+            id="poi_origin",
+            name="出发点",
+            category="sight",
+            indoor=True,
+            lng=120.155,
+            lat=30.253,
+            stay_min=0,
+            type_text="虚拟起点",
+        )
 
-    if candidates:
-        lng = sum(p.lng for p in candidates) / len(candidates)
-        lat = sum(p.lat for p in candidates) / len(candidates)
-    else:
-        lng, lat = 120.155, 30.253
-
-    return Poi(
-        id="poi_origin",
-        # 不谎称"市中心"：用户没指定出发点，就老实叫"出发点"，
-        # 免得他以为系统知道他从哪出发
-        name=prefs.start_place or "出发点",
-        category="sight",
-        indoor=True,
-        lng=lng,
-        lat=lat,
-        stay_min=0,
-        type_text="虚拟起点",
-    )
+    # 起点已经确定：不再因为“第一段远”把它换成市区中心。
+    # 第一段会在 _ordered_pick 里单独放宽；这里只负责把原因说清楚。
+    if center is not None:
+        times = _transit_times(start, candidates, exempt_names)
+        if times and times[0] > prefs.max_transit_min and warnings is not None:
+            warnings.append(
+                f"从「{label}」出发，最近的地点约需 {times[0]} 分钟，"
+                f"超过你设置的 {prefs.max_transit_min} 分钟；已保留这个起点，"
+                "第一段按实际距离单独放宽，后面几段仍按原上限排"
+            )
+    return start
 
 
 def _score_poi(
@@ -152,6 +243,11 @@ def _score_poi(
     score = float(transit)
     if transit <= 15:
         reasons.append(f"顺路（{transit} 分钟）")
+
+    # 城市必看：在同样通勤和评分条件下优先入选。
+    if getattr(poi, "core", False):
+        score -= 45
+        reasons.append("城市必看")
 
     last_category = plan[-1][0].category if plan else None
     same_kind = sum(1 for p, _, _, _ in plan if p.category == poi.category)
@@ -188,9 +284,9 @@ def _score_poi(
     if poi.category in ("shop", "other"):
         score += 80
 
-    # 明确要"评价好的"时，没有评分数据的点要降权
+    # 默认优先高评分：没有评分数据只轻降权，不能把新店/公园一刀切掉
     if prefs.prefer_high_rating and poi.rating <= 0:
-        score += 25
+        score += 5
 
     # 有招牌菜的店更容易被选中（说明数据完整、也确实是个有内容的点）
     if poi.tags:
@@ -203,6 +299,7 @@ def _ordered_pick(
     origin: Poi,
     pool: list[Poi],
     prefs: Preferences,
+    first_leg_limit: int | None = None,
 ) -> list[tuple[Poi, int, int, int]]:
     """
     贪心最近邻 + 时间窗 + 硬约束（通勤上限 / 营业时间 / 预算 / 同类数量）。
@@ -216,14 +313,17 @@ def _ordered_pick(
     end_limit = parse_time(prefs.end_time)
     plan: list[tuple[Poi, int, int, int]] = []
 
-    while remain and len(plan) < MAX_NODES - 1:
+    def _best_in(subset: list[Poi]):
+        """在当前时间/位置上，从 subset 里挑分数最低且走得通的一个。"""
         best = None
         best_transit = None
         best_score = None
-
-        for poi in remain:
+        for poi in subset:
             transit = travel_minutes(current, poi)
-            if transit > prefs.max_transit_min:
+            # 第一段单独放宽：用户选定的起点要优先保留，不能因为进市区远就
+            # 把所有候选都跳过。后续段仍然遵守用户设置的通勤上限。
+            limit = first_leg_limit if (not plan and first_leg_limit) else prefs.max_transit_min
+            if transit > limit:
                 continue
             stay = max(20, int(poi.stay_min * factor))
             arrive = clock + transit
@@ -243,7 +343,26 @@ def _ordered_pick(
                 continue
             if best_score is None or score < best_score:
                 best, best_transit, best_score = poi, transit, score
+        return best, best_transit, best_score
 
+    while remain and len(plan) < MAX_NODES - 1:
+        core_in_plan = sum(1 for p, _, _, _ in plan if getattr(p, "core", False))
+        core_remaining = [p for p in remain if getattr(p, "core", False)]
+
+        # 每天先保证城市必看点：至少 2 个；到 3 个后让位给偏好点，
+        # 剩下的必看点留到后面几天，避免一天全是大景点。
+        subset = remain
+        require_core = bool(core_remaining) and core_in_plan < CORE_PER_DAY_MIN
+        if require_core:
+            subset = core_remaining
+        elif core_in_plan >= CORE_PER_DAY_MAX:
+            subset = [p for p in remain if not getattr(p, "core", False)]
+
+        best, best_transit, _best_score = _best_in(subset)
+        # 必看点因为距离/营业时间排不进来时，不能把这一天直接判死，
+        # 退回普通候选继续排，保证用户至少得到一份能走的计划。
+        if best is None and require_core:
+            best, best_transit, _best_score = _best_in(remain)
         if best is None:
             break
 
@@ -286,6 +405,10 @@ def _node_from_poi(
         "openTime": poi.open_time or None,
         "tel": poi.tel or None,
         "tags": poi.tags,
+        # 停留时长是经验值，不是高德给的营业数据。界面上必须说清楚，
+        # 并且允许用户按自己的节奏改（改完由服务端顺延同一天后面的点）。
+        "stayMin": stay_minutes,
+        "stayBasis": "经验值：按地点类型估算",
         # 数据来自哪里必须写清楚，缺什么也要说
         "missing": [
             label
@@ -320,6 +443,7 @@ def _node_from_poi(
         "reason": "；".join(
             _score_poi(poi, transit, prefs, [])[1]
         ) or "按偏好排序入选",
+        "stayBasis": "经验值：按地点类型估算",
         "place": poi.name,
     }
 
@@ -455,9 +579,40 @@ def generate(prefs: Preferences) -> dict:
         raise RuntimeError("未配置 AMAP_KEY，无法生成行程（见 .env.example）")
 
     # ① 候选池
-    candidates = search_interests(prefs.city, prefs.interests)
+    # 第一层：城市基础观光点。用户偏好是在此基础上做加减，不能因为
+    # 只说了“咖啡/拍照”就排出一份没有景点的行程。
+    base_interests = ["景点", "名胜古迹", "公园", "博物馆"]
+    search_words = list(
+        dict.fromkeys(base_interests + CORE_SEARCH_WORDS + list(prefs.interests or []))
+    )
+    # 候选池随天数扩容：3 天以内用基础 20 条/词，长行程逐步加到高德单页上限 25。
+    per_keyword = min(25, MAX_PER_KEYWORD + max(0, int(prefs.days or 1) - 3))
+    candidates = search_interests(prefs.city, search_words, limit=per_keyword)
     candidates = [p for p in candidates if not _blocked(p, prefs.avoid)]
     candidates = _quality_filter(candidates, list(prefs.interests))
+
+    # 城市必看池：5A 景区 / 风景名胜命中的观光点，加上城市基础池里
+    # 评分很高的博物馆类地标。只做优先级标记，不硬塞用户明确避开的点。
+    core_names: set[str] = set()
+    for word in CORE_SEARCH_WORDS:
+        try:
+            core_names.update(
+                p.name
+                for p in search_keyword(prefs.city, word, limit=per_keyword)
+                if p.category in ("sight", "indoor_sight")
+            )
+        except RuntimeError:
+            # 单个关键词失败不影响整份计划：基础候选已经足够生成。
+            continue
+    for poi in candidates:
+        poi.core = poi.name in core_names or (
+            poi.category == "indoor_sight" and poi.rating >= 4.6
+        )
+
+    # 用户没有明确提咖啡/下午茶时，候选池里不要出现咖啡馆。
+    interest_text = " ".join(str(item) for item in (prefs.interests or []))
+    if not any(word in interest_text for word in ("咖啡", "下午茶", "茶馆", "茶室", "甜品", "饮品")):
+        candidates = [p for p in candidates if p.category != "cafe"]
 
     # ② 必去点：搜不到或被排除词挡掉，都要留下痕迹，不能当没发生
     must_pois: list[Poi] = []
@@ -475,8 +630,14 @@ def generate(prefs: Preferences) -> dict:
     if not must_pois and not candidates:
         raise RuntimeError(f"在「{prefs.city}」没搜到符合偏好的地点，换个兴趣词试试")
 
-    origin = _pick_origin(prefs, must_pois + candidates)
     warnings: list[str] = []
+    origin = _pick_origin(prefs, must_pois + candidates, warnings, must_pois)
+    first_leg_limit = _first_leg_limit(
+        origin,
+        must_pois + candidates,
+        prefs.max_transit_min,
+        {p.name for p in must_pois},
+    )
 
     # ③ 住宿：用户给了酒店/区域就把它当地理锚点，第二天从酒店出发，
     #    晚上回酒店，酒店通勤按真实路径算。没给就还是过夜占位，不编时间。
@@ -506,7 +667,7 @@ def generate(prefs: Preferences) -> dict:
     )
 
     # ③ 按天排：每天独立一条链，用完的点不再重复排
-    days = max(1, min(7, int(prefs.days or 1)))
+    days = max(1, min(14, int(prefs.days or 1)))
     start_date = _parse_trip_start(prefs.date)
     dates = _date_range(start_date, days)
     meeting_min = parse_time(prefs.start_time)
@@ -547,7 +708,14 @@ def generate(prefs: Preferences) -> dict:
             picks.extend(must_ordered)
 
         rest = [p for p in pool if p.name not in used_names and p.name not in locked_names]
-        picks.extend(_ordered_pick(day_origin, rest, day_prefs))
+        picks.extend(
+            _ordered_pick(
+                day_origin,
+                rest,
+                day_prefs,
+                first_leg_limit if day == 1 else None,
+            )
+        )
 
         if day > 1:
             current = day_origin
@@ -561,10 +729,24 @@ def generate(prefs: Preferences) -> dict:
         clock = day_start
         prev_poi = day_origin
         placed_must: set[str] = set()
+        transit_dropped: list[str] = []
         for poi, old_arrive, old_leave, _old_transit in picks:
             route = choose_route(prev_poi, poi, prefs.city, avoid_walking=prefs.avoid_walking)
             stay = max(20, old_leave - old_arrive)
-            arrive = clock + int(route.get("durationMin") or travel_minutes(prev_poi, poi))
+            route_min = int(route.get("durationMin") or travel_minutes(prev_poi, poi))
+
+            # 直线估算只是粗排；高德真实路径如果超了上限，就在这一步换掉，
+            # 不能把“计划写 20 分钟、地图要 50 分钟”的行程交给用户。
+            limit = (
+                first_leg_limit
+                if (day == 1 and not day_stops and first_leg_limit)
+                else prefs.max_transit_min
+            )
+            if route_min > limit and poi.name not in locked_names:
+                transit_dropped.append(f"{poi.name}（{route_min} 分钟）")
+                continue
+
+            arrive = clock + route_min
 
             window = poi.open_window()
             if window is not None:
@@ -583,6 +765,13 @@ def generate(prefs: Preferences) -> dict:
 
         if not day_stops:
             break
+
+        if transit_dropped:
+            warnings.append(
+                f"第 {day} 天有 {len(transit_dropped)} 个点按高德真实通勤超过 "
+                f"{prefs.max_transit_min} 分钟，已换成更近的点："
+                + "、".join(transit_dropped[:3])
+            )
 
         if day == 1:
             for poi in must_pois:
@@ -635,6 +824,14 @@ def generate(prefs: Preferences) -> dict:
             )
             node["id"] = f"d{day}_n{i}"
             node["date"] = day_date
+            if poi.name in locked_names:
+                node["selectionReason"] = "必去"
+            elif getattr(poi, "core", False):
+                node["selectionReason"] = "城市必看"
+            elif prefs.interests:
+                node["selectionReason"] = "偏好"
+            else:
+                node["selectionReason"] = "顺路"
             nodes.append(node)
             edges.append(
                 {
@@ -723,8 +920,17 @@ def generate(prefs: Preferences) -> dict:
             )
             current = lodging_poi or prev_poi
 
-    if len(nodes) < 3:
-        raise RuntimeError("只排得出不到 3 个点，可能是时间太短或 max_transit_min 太小")
+    stop_count = sum(
+        1 for node in nodes
+        if node.get("poi") and not node.get("overnight")
+    )
+    if stop_count == 0:
+        raise RuntimeError("没排到任何可执行的地点，换个兴趣词或放宽通勤上限再试")
+    if stop_count < 3:
+        warnings.append(
+            f"这次只排到 {stop_count} 个地点：起点较远或时间太短。"
+            "计划仍然保留，不会因为点少而加载失败；可以晚点出发、放宽通勤或减少必去点"
+        )
 
     actual_dates = sorted({str(node.get("date") or prefs.date) for node in nodes})
     actual_days = len(actual_dates) or 1
@@ -753,6 +959,12 @@ def generate(prefs: Preferences) -> dict:
             "city": prefs.city,
             "interests": list(prefs.interests),
             "mustVisit": list(prefs.must_visit),
+            # 城市必看池：池子里有什么、实际排进去了哪些，界面上可以解释
+            # “这版为什么像一份旅行计划”，也方便验收覆盖度。
+            "mustSeePool": sorted(p.name for p in candidates if getattr(p, "core", False)),
+            "mustSeeVisited": [
+                node["title"] for node in nodes if node.get("selectionReason") == "城市必看"
+            ],
             # 用户点名但没排进去的必去点，界面上要标"待确认"
             "unresolvedMustVisit": list(unresolved),
             "pace": prefs.pace,

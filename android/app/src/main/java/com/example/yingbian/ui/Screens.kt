@@ -28,6 +28,7 @@ import com.example.yingbian.data.PatrolResult
 import com.example.yingbian.data.Province
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -63,6 +64,7 @@ import com.example.yingbian.data.PlanEdge
 import com.example.yingbian.data.PlanNode
 import com.example.yingbian.data.PlanSummary
 import com.example.yingbian.data.RepairScheme
+import com.example.yingbian.data.UndoPreview
 import com.example.yingbian.data.VoteState
 import com.example.yingbian.data.Weather
 import java.text.SimpleDateFormat
@@ -97,6 +99,8 @@ fun PlanScreen(
     weatherError: String? = null,
     weatherLoading: Boolean = false,
     onUseLocation: () -> Unit = {},
+    onEditLodging: () -> Unit = {},
+    onAdjustStay: (PlanNode) -> Unit = {},
 ) {
     var weatherOpen by remember { mutableStateOf(false) }
 
@@ -145,6 +149,29 @@ fun PlanScreen(
                 modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp),
             )
         }
+        if (plan.days > 1) {
+            val hotel = plan.nodes.firstOrNull { it.overnight }
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp),
+                color = SoftBlue,
+                shape = RoundedCornerShape(10.dp),
+                onClick = onEditLodging,
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = if (hotel?.place.isNullOrBlank()) "住宿：待定" else "住宿：${hotel?.place}",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Ink,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Text("修改 ›", fontSize = 11.sp, color = Muted)
+                }
+            }
+        }
         if (plan.unresolvedMustVisit.isNotEmpty() || plan.generationWarnings.isNotEmpty()) {
             GenerateNotice(plan)
         }
@@ -169,6 +196,7 @@ fun PlanScreen(
                         node = node,
                         state = impact?.stateOf(node.id) ?: "ok",
                         shift = impact?.shiftOf(node.id) ?: 0,
+                        onClick = { onAdjustStay(node) },
                     )
                     if (index < dayNodes.lastIndex) {
                         EdgeLine(edgeBetween(plan, node, dayNodes[index + 1]))
@@ -348,6 +376,9 @@ fun NewPlanScreen(
         startPlace: String,
         startLat: Double?,
         startLng: Double?,
+        lodging: String,
+        pace: String,
+        maxTransitMin: Int,
     ) -> Unit,
     onLocate: suspend () -> Pair<Double, Double>? = { null },
 ) {
@@ -356,6 +387,9 @@ fun NewPlanScreen(
     var endDate by remember { mutableStateOf("") }
     var text by remember { mutableStateOf("") }
     var startPlace by remember { mutableStateOf("") }
+    var lodging by remember { mutableStateOf("") }
+    var pace by remember { mutableStateOf("normal") }
+    var maxTransitMin by remember { mutableStateOf(60) }
     var startLat by remember { mutableStateOf<Double?>(null) }
     var startLng by remember { mutableStateOf<Double?>(null) }
     var locating by remember { mutableStateOf(false) }
@@ -480,6 +514,57 @@ fun NewPlanScreen(
         }
 
         Spacer(Modifier.height(22.dp))
+        Text("住在哪里？", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = lodging,
+            onValueChange = { lodging = it },
+            placeholder = { Text("酒店名或附近地标；不填就按待定排", fontSize = 12.sp) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(4.dp))
+        Text("填了住宿，第二天会从酒店出发，晚上回酒店的路也会按地图算。", fontSize = 10.sp, color = Muted)
+
+        Spacer(Modifier.height(22.dp))
+        Text("节奏", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(
+                "relaxed" to "轻松",
+                "normal" to "正常",
+                "packed" to "紧凑",
+            ).forEach { (value, label) ->
+                val selected = pace == value
+                if (selected) {
+                    Button(onClick = { pace = value }) { Text(label, fontSize = 12.sp) }
+                } else {
+                    OutlinedButton(onClick = { pace = value }) { Text(label, fontSize = 12.sp) }
+                }
+            }
+        }
+        Text("轻松会缩短每天的点数、建议 18:30 结束；紧凑会多排并建议 21:00 结束。", fontSize = 10.sp, color = Muted)
+
+        Spacer(Modifier.height(22.dp))
+        Text("单段路最多坐多久？", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf(
+                45 to "45 分钟",
+                60 to "60 分钟",
+                90 to "90 分钟",
+            ).forEach { (value, label) ->
+                val selected = maxTransitMin == value
+                if (selected) {
+                    Button(onClick = { maxTransitMin = value }) { Text(label, fontSize = 12.sp) }
+                } else {
+                    OutlinedButton(onClick = { maxTransitMin = value }) { Text(label, fontSize = 12.sp) }
+                }
+            }
+        }
+        Text("默认 60 分钟；90 只建议当天只去一个远点、或必去点在郊区时用。", fontSize = 10.sp, color = Muted)
+
+        Spacer(Modifier.height(22.dp))
         Text("说说你想怎么玩", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(
@@ -489,6 +574,12 @@ fun NewPlanScreen(
             modifier = Modifier.fillMaxWidth(),
             minLines = 3,
         )
+        Text(
+            "兴趣最多识别 6 个、避开项最多 8 个；你点名的“必去”不会悄悄丢掉。",
+            fontSize = 10.sp,
+            color = Muted,
+            modifier = Modifier.padding(top = 4.dp),
+        )
 
         if (!error.isNullOrBlank()) {
             Spacer(Modifier.height(10.dp))
@@ -497,7 +588,7 @@ fun NewPlanScreen(
 
         Spacer(Modifier.height(24.dp))
         Button(
-            onClick = { onCreate(city, startDate, endDate, text, startPlace, startLat, startLng) },
+            onClick = { onCreate(city, startDate, endDate, text, startPlace, startLat, startLng, lodging, pace, maxTransitMin) },
             enabled = !busy && city.isNotBlank() && startDate.isNotBlank() && endDate.isNotBlank(),
             modifier = Modifier.fillMaxWidth().height(48.dp),
         ) {
@@ -728,8 +819,11 @@ private fun CollabBar(
                 Text(if (locateLoading) "定位中…" else "定位", fontSize = 11.sp)
             }
             TextButton(onClick = onActivity) { Text("记录", fontSize = 11.sp) }
-            TextButton(onClick = onVote) {
-                Text(if (voteOpen) "投票中…" else "投票", fontSize = 11.sp)
+            // 一个人出行时没有“投票”对象，按钮直接不出现，避免点了没反应。
+            if (memberCount > 1) {
+                TextButton(onClick = onVote) {
+                    Text(if (voteOpen) "投票中…" else "投票", fontSize = 11.sp)
+                }
             }
         }
     }
@@ -1149,23 +1243,67 @@ fun SchemeScreen(
     }
 }
 
+/** 方案弹窗：只在“需要改行程”时从底部弹出，不再占一个底部 tab */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SchemeSheet(
+    plan: Plan,
+    schemes: List<RepairScheme>,
+    selectedId: String?,
+    loading: Boolean,
+    onSelect: (String) -> Unit,
+    onApply: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            Text("怎么改？", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Ink)
+            Text(
+                text = "按“保时间 / 保体验”给出两套，选一套就应用；不改可以关掉。",
+                fontSize = 11.sp,
+                color = Muted,
+                modifier = Modifier.padding(top = 3.dp, bottom = 10.dp),
+            )
+            if (schemes.isEmpty()) {
+                Text("暂时没有可用方案。", fontSize = 12.sp, color = Muted)
+            } else {
+                LazyColumn(
+                    modifier = Modifier.height(360.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(schemes, key = { it.id }) { scheme ->
+                        SchemeCard(
+                            scheme = scheme,
+                            plan = plan,
+                            selected = scheme.id == selectedId,
+                            onClick = { onSelect(scheme.id) },
+                        )
+                    }
+                }
+            }
+            Button(
+                onClick = onApply,
+                enabled = selectedId != null && !loading,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
+            ) {
+                Text(if (loading) "应用中…" else "采用选中的方案")
+            }
+        }
+    }
+}
+
 @Composable
 fun NotifyScreen(
     notifications: List<NotificationRow>,
-    selection: Set<String>,
-    onToggle: (String) -> Unit,
-    onConfirm: () -> Unit,
+    onCall: (NotificationRow) -> Unit,
+    onCopy: (NotificationRow) -> Unit,
+    onBack: () -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
-            text = "通知对象由你确认，系统不替你猜谁该被通知",
+            text = "一个变化只产生一条行动项；App 内成员自动收到，只有需要打电话确认的才需要你点一下。",
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            fontSize = 12.sp,
-            color = Muted,
-        )
-        Text(
-            text = "已选 ${selection.size} / ${notifications.size} 条通知",
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
             fontSize = 12.sp,
             color = Muted,
         )
@@ -1175,21 +1313,54 @@ fun NotifyScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             items(notifications, key = { it.id }) { row ->
-                NotifyRow(
-                    row = row,
-                    checked = row.id in selection,
-                    onCheckedChange = { onToggle(row.id) },
-                )
+                ReminderRow(row = row, onCall = { onCall(row) }, onCopy = { onCopy(row) })
+            }
+            if (notifications.isEmpty()) {
+                item { EmptyHint("还没有需要提醒的变化。行程改动后，这里会自动出现一条。") }
             }
             item { Spacer(Modifier.height(6.dp)) }
         }
         Surface(color = Color.White, shadowElevation = 10.dp) {
-            Button(
-                onClick = onConfirm,
-                enabled = selection.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-            ) {
-                Text("确认并生成待办")
+            OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+                Text("回到行程")
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReminderRow(
+    row: NotificationRow,
+    onCall: () -> Unit,
+    onCopy: () -> Unit,
+) {
+    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp)) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                LevelBadge(row.level)
+                Spacer(Modifier.width(8.dp))
+                Text(row.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(row.text, fontSize = 12.sp, color = Ink)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = when (row.kind) {
+                    "auto" -> "已自动通知 App 内成员，不需要你再操作"
+                    "assist" -> "需要你联系：${row.person}"
+                    else -> "只读知会，无需操作"
+                },
+                fontSize = 10.sp,
+                color = Muted,
+            )
+            if (row.kind == "assist") {
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (row.phone.isNotBlank()) {
+                        Button(onClick = onCall) { Text("打电话", fontSize = 12.sp) }
+                    }
+                    OutlinedButton(onClick = onCopy) { Text("复制话术", fontSize = 12.sp) }
+                }
             }
         }
     }
@@ -1370,6 +1541,179 @@ private fun impactReason(node: PlanNode, state: String): String = when (state) {
 }
 
 @Composable
+fun UndoDialog(
+    preview: UndoPreview?,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (preview?.canUndo == true) "撤销到上一版？" else "没有可撤销的改动") },
+        text = {
+            Column {
+                Text(preview?.summary ?: "正在读取…", fontSize = 13.sp, color = Ink)
+                if (!preview?.changes.isNullOrEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    preview?.changes?.forEach { change ->
+                        Text(
+                            text = "· ${change.title}：${change.text}",
+                            fontSize = 11.sp,
+                            color = Muted,
+                            modifier = Modifier.padding(vertical = 2.dp),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onConfirm,
+                enabled = preview?.canUndo == true,
+            ) { Text("确认撤销") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("先不撤") } },
+    )
+}
+
+@Composable
+fun AutoLocateDialog(
+    result: LocateResult,
+    onCheckin: () -> Unit,
+    onFix: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val arrived = result.arrived
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(if (arrived) "到了「${result.atNodeTitle}」" else "你可能落后了")
+        },
+        text = {
+            Column {
+                Text(
+                    if (arrived) {
+                        "定位显示你在目标点 ${result.atDistanceM} 米内。要现在打卡吗？"
+                    } else {
+                        "计划已经在推进，但定位还停在「${result.atNodeTitle}」，落后约 ${result.driftMinutes} 分钟。"
+                    },
+                    fontSize = 13.sp,
+                    color = Ink,
+                )
+                if (result.message.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(result.message, fontSize = 11.sp, color = Muted)
+                }
+            }
+        },
+        confirmButton = {
+            if (arrived) {
+                Button(onClick = onCheckin) { Text("打卡") }
+            } else {
+                Button(onClick = onFix) { Text("看看怎么改") }
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("先不管") } },
+    )
+}
+
+@Composable
+fun LodgingDialog(
+    initial: String,
+    busy: Boolean,
+    onSave: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember { mutableStateOf(initial) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial.isBlank()) "住在哪里？" else "修改住宿") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    placeholder = { Text("酒店名或附近地标", fontSize = 12.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(6.dp))
+                Text("只会改酒店节点和晚上那段通勤，白天行程不动。", fontSize = 11.sp, color = Muted)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(name.trim()) }, enabled = !busy && name.isNotBlank()) {
+                Text(if (busy) "保存中…" else "保存")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+fun StayDialog(
+    node: PlanNode,
+    busy: Boolean,
+    onSave: (Int) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var minutes by remember { mutableStateOf(node.durationMin.toString()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("调整「${node.title}」停留") },
+        text = {
+            Column {
+                Text("当前 ${node.durationMin} 分钟。改完同一天后面的站点会一起顺延。", fontSize = 12.sp, color = Muted)
+                Spacer(Modifier.height(8.dp))
+                Row {
+                    listOf(30, 45, 60, 90, 120).forEach { preset ->
+                        TextButton(onClick = { minutes = preset.toString() }) {
+                            Text("$preset", fontSize = 12.sp)
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = minutes,
+                    onValueChange = { minutes = it.filter(Char::isDigit).take(3) },
+                    label = { Text("分钟", fontSize = 11.sp) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { minutes.toIntOrNull()?.let(onSave) },
+                enabled = !busy && (minutes.toIntOrNull() ?: 0) >= 15,
+            ) { Text(if (busy) "保存中…" else "保存") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+fun WeatherChangeDialog(
+    alert: PatrolAlert,
+    onFix: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(alert.title.ifBlank { "天气会影响行程" }) },
+        text = {
+            Column {
+                Text(alert.detail.ifBlank { "检测到降雨会覆盖一个户外地点。" }, fontSize = 13.sp, color = Ink)
+                if (alert.action.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("建议：${alert.action}", fontSize = 11.sp, color = Muted)
+                }
+            }
+        },
+        confirmButton = { Button(onClick = onFix) { Text("现在改行程") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("先按原计划") } },
+    )
+}
+
+@Composable
 fun BlockedDialog(
     message: String,
     onUnlock: () -> Unit,
@@ -1507,7 +1851,7 @@ fun VoteSheet(
     )
 }
 
-/** 活动记录：谁在什么时候改了什么，替代群聊刷屏 */
+/** 行程记录：本地操作 + 协作事件合并成一条时间线，单人也能看懂发生过什么 */
 @Composable
 fun ActivityDialog(
     rows: List<ActivityRow>,
@@ -1516,7 +1860,7 @@ fun ActivityDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("协作记录") },
+        title = { Text("行程记录") },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 if (members.isNotEmpty()) {
@@ -1528,9 +1872,9 @@ fun ActivityDialog(
                     Spacer(Modifier.height(8.dp))
                 }
                 if (rows.isEmpty()) {
-                    Text("还没有记录", fontSize = 12.sp, color = Muted)
+                    Text("还没有记录；生成或改一次行程就会出现在这里", fontSize = 12.sp, color = Muted)
                 }
-                rows.take(20).forEach { row ->
+                rows.takeLast(20).forEach { row ->
                     Text(
                         text = "${row.at.takeLast(5)}  ${row.name}：${row.text}",
                         fontSize = 11.sp,
@@ -1542,6 +1886,98 @@ fun ActivityDialog(
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
     )
+}
+
+/**
+ * 我的：只放“关于我”的东西——昵称、身份、服务器、调试入口。
+ * 历史行程不在这里重复，统一放首页的“计划”。
+ */
+@Composable
+fun ProfileScreen(
+    memberName: String,
+    memberId: String,
+    baseUrl: String,
+    useMock: Boolean,
+    memberCount: Int,
+    planTitle: String,
+    onRename: (String) -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenDebug: () -> Unit,
+) {
+    var name by remember { mutableStateOf(memberName) }
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Surface(color = Color(0xFFF0EDFF), shape = RoundedCornerShape(28.dp)) {
+                Box(modifier = Modifier.size(56.dp), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = memberName.take(1).ifBlank { "我" },
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Ink,
+                    )
+                }
+            }
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text(memberName, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Ink)
+                Text("身份 $memberId · 同行 $memberCount 人", fontSize = 11.sp, color = Muted)
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+        Text("我的昵称", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(8.dp))
+            Button(
+                onClick = { if (name.isNotBlank()) onRename(name.trim()) },
+                enabled = name.isNotBlank() && name != memberName,
+            ) { Text("保存") }
+        }
+        Text("昵称会出现在同行成员的投票和操作记录里。", fontSize = 10.sp, color = Muted)
+
+        Spacer(Modifier.height(24.dp))
+        Text("连接", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+        Spacer(Modifier.height(6.dp))
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = Color.White,
+            shape = RoundedCornerShape(14.dp),
+            shadowElevation = 1.dp,
+            onClick = onOpenSettings,
+        ) {
+            Column(modifier = Modifier.padding(14.dp)) {
+                Text(
+                    text = if (useMock) "离线演示（不连服务器）" else baseUrl,
+                    fontSize = 12.sp,
+                    color = Ink,
+                )
+                Spacer(Modifier.height(3.dp))
+                Text("点这里改服务器地址或重新自动寻找", fontSize = 10.sp, color = Muted)
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+        Text("当前行程", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+        Spacer(Modifier.height(6.dp))
+        Text(planTitle.ifBlank { "还没有打开的行程" }, fontSize = 12.sp, color = Muted)
+
+        Spacer(Modifier.height(24.dp))
+        OutlinedButton(onClick = onOpenDebug, modifier = Modifier.fillMaxWidth()) {
+            Text("调试 / 演示状态", fontSize = 12.sp)
+        }
+        Spacer(Modifier.height(20.dp))
+        Text("应变 · 行程变化助手", fontSize = 10.sp, color = Muted)
+    }
 }
 
 /**
@@ -1559,13 +1995,15 @@ fun HomeScreen(
     onCreate: () -> Unit,
     onDelete: (String) -> Unit,
 ) {
+    val mine = plans.filterNot { it.builtin }
+    val examples = plans.filter { it.builtin }
     Column(modifier = Modifier.fillMaxSize()) {
         // 顶部已经有标题和加号了，这里不再重复一行"我的计划 + 新建"
 
-        if (plans.isEmpty() && !loading) {
+        if (mine.isEmpty() && !loading) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("还没有行程", fontSize = 14.sp, color = Muted)
+                    Text("还没有你自己的行程", fontSize = 14.sp, color = Muted)
                     Spacer(Modifier.height(6.dp))
                     Text("点右上角＋，说一句你想怎么玩", fontSize = 12.sp, color = Muted)
                 }
@@ -1578,7 +2016,10 @@ fun HomeScreen(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            items(plans, key = { it.planId }) { item ->
+            if (mine.isNotEmpty()) {
+                item { SectionHeader("我的行程", "只放你生成/打开过的，不和示范混在一起") }
+            }
+            items(mine, key = { it.planId }) { item ->
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     color = Color.White,
@@ -1620,6 +2061,24 @@ fun HomeScreen(
                             TextButton(onClick = { onDelete(item.planId) }) {
                                 Text("删除", fontSize = 11.sp, color = ConflictOrange)
                             }
+                        }
+                    }
+                }
+            }
+            if (examples.isNotEmpty()) {
+                item {
+                    SectionHeader("示例行程（演示用）", "内置数据，用来讲“零缓冲会全崩”；不参与你的历史")
+                }
+                items(examples, key = { it.planId }) { item ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = Color(0xFFF7F7F8),
+                        shape = RoundedCornerShape(14.dp),
+                        onClick = { onOpen(item.planId) },
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp)) {
+                            Text(item.title, fontSize = 13.sp, color = Ink, fontWeight = FontWeight.SemiBold)
+                            Text("内置示范 · ${item.date}", fontSize = 10.sp, color = Muted)
                         }
                     }
                 }

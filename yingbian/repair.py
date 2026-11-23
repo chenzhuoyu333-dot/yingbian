@@ -264,16 +264,17 @@ def repair(
             break
 
     final_report = propagate(working, event)
+    final_actions = _compact_shifts(actions, working)
     status = "ok" if all(state == "ok" for state in final_report.states.values()) else "partial"
     return RepairResult(
         status=status,
         scheme=scheme.key,
         label=scheme.label,
-        actions=actions,
+        actions=final_actions,
         blocked_node=None,
         message="",
         keep_rate=_keep_rate(plan, working),
-        changed_count=len(actions),
+        changed_count=len(final_actions),
         plan=working,
         elapsed_ms=(time.perf_counter() - started) * 1000,
     )
@@ -307,14 +308,70 @@ def _apply_action(node: Node, action: Action, alt: Alternative | None) -> None:
         raise ValueError(f"未知动作: {action.action}")
 
 
+def _compact_shifts(actions: list[Action], plan: Plan) -> list[Action]:
+    """把同一天、同样分钟数的多次后移合并成一条“整体推迟”。
+
+    用户看到的应该是“后面 4 站一起顺延 30 分钟”，而不是四条一模一样的
+    “XX 后移 30 分钟”。合并后通知/待办也只需要一条。
+    """
+    groups: dict[tuple[str, int], list[tuple[int, Action]]] = {}
+    for index, action in enumerate(actions):
+        if action.action != "shift":
+            continue
+        node = plan.find(action.node_id)
+        if node is None:
+            continue
+        minutes = int(action.payload.get("minutes") or 0)
+        key = (node.date or plan.date, minutes)
+        groups.setdefault(key, []).append((index, action))
+
+    compacted_indexes: set[int] = set()
+    replacements: dict[int, Action] = {}
+    for (day, minutes), group in groups.items():
+        if len(group) < 2 or minutes <= 0:
+            continue
+        first_index = group[0][0]
+        node_ids = [item.node_id for _, item in group]
+        titles = [plan.find(nid).title for nid in node_ids if plan.find(nid) is not None]
+        replacements[first_index] = Action(
+            node_id=group[0][1].node_id,
+            action="shift_all",
+            reason=f"整体推迟 {minutes} 分钟（{len(group)} 站一起顺延）",
+            cost=sum(item.cost for _, item in group),
+            payload={
+                "minutes": minutes,
+                "nodeIds": node_ids,
+                "titles": titles,
+                "count": len(group),
+            },
+        )
+        compacted_indexes.update(index for index, _ in group[1:])
+
+    result: list[Action] = []
+    for index, action in enumerate(actions):
+        if index in replacements:
+            result.append(replacements[index])
+        elif index not in compacted_indexes:
+            result.append(action)
+    return result
+
+
 def apply_actions(plan: Plan, actions: list[dict[str, Any]]) -> Plan:
     working = plan.clone()
     for raw in actions:
+        kind = raw["action"]
+        payload = raw.get("payload", {})
+        if kind == "shift_all":
+            minutes = int(payload.get("minutes") or 0)
+            for node_id in payload.get("nodeIds") or []:
+                node = working.find(str(node_id))
+                if node is not None:
+                    node.start += minutes
+                    node.end += minutes
+            continue
         node = working.find(raw["nodeId"])
         if node is None:
             continue
-        kind = raw["action"]
-        payload = raw.get("payload", {})
         alt = None
         if kind == "replace":
             alt = next((a for a in node.alternatives if a.id == payload.get("alternativeId")), None)
