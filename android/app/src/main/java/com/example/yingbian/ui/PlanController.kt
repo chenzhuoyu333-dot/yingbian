@@ -588,8 +588,8 @@ class PlanController(
             if (mine == null) {
                 plan = null
                 todayEmpty = true
-                // 空态也要天气：按定位查，取不到就留空
-                loadWeather()
+                // 空态也要天气：界面会先用定位调 refreshWeather(lat,lng)，
+                // 这里不再强行猜位置，取不到就留空（界面显示"取不到天气"）
             } else {
                 openPlan(mine.planId)
             }

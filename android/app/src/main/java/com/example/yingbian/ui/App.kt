@@ -108,7 +108,7 @@ fun YingBianRoot() {
     fun handlePatrolAlert(alert: PatrolAlert) {
         scope.launch {
             when (alert.kind) {
-                // 天气：直接走"报告变化：下雨"
+                // 天气：直接走降雨事件（由真实降雨提示触发）
                 "weather" -> controller.simulateRain()
                 // 来不及了 / 落后：按该节点报一个延后事件，让引擎算方案
                 "closing", "behind" -> {

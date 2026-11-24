@@ -235,6 +235,8 @@ fun PlanScreen(
         }
         PlanBottomBar(
             impact = impact,
+            // 降雨概率来自真实天气接口；达到阈值才提示
+            weatherAlert = (weather?.rainProb ?: 0.0) >= 0.6,
             loading = loading,
             offline = offline,
             onRain = onRain,
@@ -942,6 +944,7 @@ private fun PlanBottomBar(
     onSchemes: () -> Unit,
     onDepart: () -> Unit,
     onCheckin: () -> Unit,
+    weatherAlert: Boolean = false,
 ) {
     Surface(color = Color.White, shadowElevation = 10.dp) {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
@@ -972,14 +975,22 @@ private fun PlanBottomBar(
                     color = Muted,
                     textAlign = TextAlign.Center,
                 )
-            } else if (impact == null) {
+            } else if (impact == null && weatherAlert) {
+                // 只有查到真实降雨才出现这一条（概率来自天气接口）
                 Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = onRain,
-                    enabled = !offline,
+                Row(
                     modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(if (offline) "离线，无法重算" else "报告变化：15:00 起下雨")
+                    Text(
+                        text = "行程地点可能要下雨",
+                        fontSize = 12.sp,
+                        color = Ink,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onRain, enabled = !offline) {
+                        Text(if (offline) "离线" else "看怎么改", fontSize = 12.sp)
+                    }
                 }
             } else {
                 Spacer(Modifier.height(8.dp))
