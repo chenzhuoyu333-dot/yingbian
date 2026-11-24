@@ -39,8 +39,9 @@ object ServerDiscovery {
     private const val MAGIC = "YINGBIAN_DISCOVER"
 
     /** 大网段扫描的地址预算与并发（越界就只扫前 N 个，避免扫爆） */
-    private const val WIDE_MAX_HOSTS = 2048
-    private const val WIDE_CONCURRENCY = 64
+    private const val WIDE_MAX_HOSTS = 4096
+    private const val WIDE_CONCURRENCY = 128
+    private const val PROBE_TIMEOUT_MS = 150
 
     /**
      * 找后端。
@@ -223,20 +224,29 @@ object ServerDiscovery {
             return (1..254).map { "${octets[0]}.${octets[1]}.${octets[2]}.$it" }
                 .filter { it != net.ip }
         }
-        // /20 之类：保留前 (prefix) 位，后面全遍历，但有预算上限
-        val base = octets[0] shl 24 or (octets[1] shl 16) or (octets[2] shl 8) or octets[3]
-        val mask = if (prefix == 0) 0 else (-1 shl (32 - prefix))
-        val network = base and mask
-        val hostBits = 32 - prefix
-        val total = 1 shl hostBits
+
+        // 比 /24 更大的网段（校园网常见 /20）：
+        // 不能从子网开头顺序扫到预算用完为止 —— 10.197.80.0/20 里，
+        // 预算 2048 只够扫到 10.197.87.255，而电脑可能在 10.197.94.114。
+        // 所以按"离自己所在 /24 的距离"由近到远排，先扫身边的。
+        val ownThird = octets[2]
+        val thirdCount = 256 shr (24 - prefix)          // /20 → 16 个 /24
+        val thirdBase = (octets[2] / thirdCount) * thirdCount
+        val order = mutableListOf<Int>()
+        order.add(ownThird)
+        for (step in 1 until thirdCount) {
+            listOf(ownThird - step, ownThird + step).forEach { candidate ->
+                if (candidate in thirdBase until (thirdBase + thirdCount)) order.add(candidate)
+            }
+        }
+
         val hosts = mutableListOf<String>()
-        var index = 1
-        while (index < total - 1 && hosts.size < WIDE_MAX_HOSTS) {
-            val value = network + index
-            val ip = "${(value ushr 24) and 0xFF}.${(value ushr 16) and 0xFF}." +
-                "${(value ushr 8) and 0xFF}.${value and 0xFF}"
-            if (ip != net.ip) hosts.add(ip)
-            index++
+        for (third in order) {
+            for (last in 1..254) {
+                val ip = "${octets[0]}.${octets[1]}.$third.$last"
+                if (ip != net.ip) hosts.add(ip)
+                if (hosts.size >= WIDE_MAX_HOSTS) return hosts
+            }
         }
         return hosts
     }
