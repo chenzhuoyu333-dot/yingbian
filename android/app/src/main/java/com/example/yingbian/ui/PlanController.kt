@@ -114,6 +114,8 @@ class PlanController(
         private set
     var checkinSelectedId by mutableStateOf<String?>(null)
         private set
+    var checkinInitialNodeId by mutableStateOf<String?>(null)
+        private set
     var eventTitle by mutableStateOf("降雨 15:00–17:00")
         private set
     /** 生成后的提示（例如"必去点排不进去"），界面上用 Toast 或角标展示 */
@@ -271,7 +273,8 @@ class PlanController(
     suspend fun autoLocate(lat: Double, lng: Double, now: String? = null) {
         val result = runCatching { repo.locate(lat, lng, now) }.getOrNull() ?: return
         if (!result.arrived && !result.isBehind) return
-        val key = if (result.arrived) "arrive:${result.atNodeId}" else "behind:${result.driftMinutes / 10}"
+        val targetId = result.shouldNodeId.ifBlank { result.shouldNodeTitle }
+        val key = if (result.arrived) "arrive:${result.atNodeId}" else "behind:$targetId"
         if (key == autoPromptKey) return
         autoPromptKey = key
         autoPrompt = result
@@ -279,6 +282,11 @@ class PlanController(
             if (result.arrived) "定位到「${result.atNodeTitle}」，提示打卡"
             else "定位发现落后 ${result.driftMinutes} 分钟，提示改行程"
         )
+    }
+
+    private fun resetAutoLocatePrompt() {
+        autoPromptKey = ""
+        autoPrompt = null
     }
 
     fun dismissAutoPrompt() {
@@ -386,6 +394,7 @@ class PlanController(
         pace: String = "normal",
         maxTransitMin: Int = 60,
     ) {
+        resetAutoLocatePrompt()
         loading = true
         error = null
         generateNote = null
@@ -487,6 +496,7 @@ class PlanController(
 
     /** 从首页打开一份已有的行程 */
     suspend fun openPlan(planId: String) {
+        resetAutoLocatePrompt()
         loading = true
         error = null
         try {
@@ -558,6 +568,7 @@ class PlanController(
     }
 
     suspend fun load() {
+        resetAutoLocatePrompt()
         scenario = DemoScenario.RAIN
         eventTitle = "降雨 15:00–17:00"
         loading = true
@@ -719,11 +730,12 @@ class PlanController(
         }
     }
 
-    fun openCheckin() {
+    fun openCheckin(nodeId: String? = null) {
         if (plan == null) return
         checkinResult = null
         checkinError = null
         checkinSelectedId = null
+        checkinInitialNodeId = nodeId
         checkinOpen = true
     }
 
@@ -731,6 +743,7 @@ class PlanController(
         if (checkinLoading) return
         checkinOpen = false
         checkinError = null
+        checkinInitialNodeId = null
     }
 
     suspend fun submitCheckin(nodeId: String, minutes: Int, personId: String? = null) {

@@ -999,15 +999,18 @@ fun CheckinSheet(
     loading: Boolean,
     error: String?,
     selectedSchemeId: String?,
+    initialNodeId: String?,
     onCheckin: (nodeId: String, minutes: Int, personId: String?) -> Unit,
     onSelectScheme: (String) -> Unit,
     onApply: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var nodeId by remember(plan.planId) {
+    var nodeId by remember(plan.planId, initialNodeId) {
+        val target = plan.nodes.firstOrNull { it.id == initialNodeId }?.id
         mutableStateOf(
-            plan.nodes.firstOrNull { !it.confirmed }?.id
+            target
+                ?: plan.nodes.firstOrNull { !it.confirmed }?.id
                 ?: plan.nodes.firstOrNull()?.id.orEmpty(),
         )
     }

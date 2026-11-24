@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 from yingbian.generate import Preferences, generate
 from yingbian.location import locate
-from yingbian.models import Plan
+from yingbian.models import Node, Plan
 
 POIS = [
     ("B1", "博物馆甲", "科教文化服务;博物馆", "120.160,30.245"),
@@ -112,6 +112,43 @@ class LocateTest(unittest.TestCase):
         result = locate(builtin, 30.25, 120.15, 600)
         self.assertEqual(result["status"], "no_location_data")
         self.assertTrue(result["message"])
+
+    def test_multiday_only_compares_the_active_day(self):
+        plan = Plan(
+            plan_id="multi",
+            title="多日",
+            date="2026-11-24",
+            end_date="2026-11-27",
+            days=4,
+            nodes=[
+                Node(
+                    id="d1",
+                    type="place",
+                    title="第一天",
+                    start=600,
+                    end=660,
+                    indoor=False,
+                    confirmed=False,
+                    date="2026-11-24",
+                    poi={"lat": 30.0, "lng": 120.0},
+                ),
+                Node(
+                    id="d4",
+                    type="place",
+                    title="第四天",
+                    start=600,
+                    end=660,
+                    indoor=False,
+                    confirmed=False,
+                    date="2026-11-27",
+                    poi={"lat": 30.2, "lng": 120.2},
+                ),
+            ],
+            edges=[],
+        )
+        result = locate(plan, 30.0, 120.0, 700, today="2026-11-24")
+        self.assertEqual(result["shouldNodeId"], "d1", result)
+        self.assertEqual(result["status"], "on_track", result)
 
 
 if __name__ == "__main__":

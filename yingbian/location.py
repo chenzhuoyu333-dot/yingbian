@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import time
+from datetime import date
 from typing import Any
 
 from .models import Node, Plan
@@ -225,7 +226,23 @@ NEAR_RADIUS_M = 1500        # 超过这个距离就认为不在任何计划点�
 LATE_TOLERANCE_MIN = 10     # 落后 10 分钟以内不算晚
 
 
-def locate(plan: Plan, lat: float, lng: float, now_minutes: int) -> dict[str, Any]:
+def _active_day(plan: Plan, today: str | None) -> str:
+    """定位判断只比较当天节点，避免第 1 天 12:10 拿去和第 4 天 11:51 比。"""
+    day = today or date.today().isoformat()
+    start = plan.date
+    end = plan.end_date or plan.date
+    if start and end and start <= day <= end:
+        return day
+    return start or day
+
+
+def locate(
+    plan: Plan,
+    lat: float,
+    lng: float,
+    now_minutes: int,
+    today: str | None = None,
+) -> dict[str, Any]:
     """根据当前位置和当前时间，判断你落后了吗，落后就给出改法。
 
     场景：17:00 本该到下一个点，但你还在上一个点。
@@ -236,9 +253,18 @@ def locate(plan: Plan, lat: float, lng: float, now_minutes: int) -> dict[str, An
 
     不做持续定位、不上传轨迹：只在用户主动点一下时算一次。
     """
+    day = _active_day(plan, today)
+    day_nodes = [
+        node
+        for node in plan.nodes
+        if not node.dropped and (not node.date or node.date == day)
+    ]
+    if not day_nodes:
+        day_nodes = [node for node in plan.nodes if not node.dropped]
+
     located = [
         (node, _node_point(node))
-        for node in plan.nodes
+        for node in day_nodes
         if not node.dropped and _node_point(node) is not None
     ]
     if not located:
@@ -266,7 +292,7 @@ def locate(plan: Plan, lat: float, lng: float, now_minutes: int) -> dict[str, An
 
     # “此刻本该在”哪个点：计划里 start 已经过了的最后一个节点
     passed = sorted(
-        (n for n in plan.nodes if not n.dropped and n.start <= now_minutes),
+        (n for n in day_nodes if n.start <= now_minutes),
         key=lambda n: n.start,
     )
     should = passed[-1] if passed else node

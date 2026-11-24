@@ -422,8 +422,10 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
             status = "behind",
             message = "你还在「" + (at?.title ?: "上一站") + "」，计划早就该到「" +
                 (should?.title ?: "下一站") + "」，已落后 40 分钟（离线演示数据）",
+            atNodeId = at?.id.orEmpty(),
             atNodeTitle = at?.title ?: "",
             shouldNodeTitle = should?.title ?: "",
+            shouldNodeId = should?.id.orEmpty(),
             driftMinutes = 40,
             schemes = repair?.schemes.orEmpty(),
         )

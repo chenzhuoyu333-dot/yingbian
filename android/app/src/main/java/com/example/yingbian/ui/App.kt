@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -35,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -47,6 +49,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.example.yingbian.data.ApiConfig
 import com.example.yingbian.data.ApiSettings
 import com.example.yingbian.data.LocationHelper
@@ -68,6 +72,26 @@ fun YingBianRoot() {
     val controller = remember(repoVersion) { PlanController(createRepository(context, settings), settings) }
     val scope = rememberCoroutineScope()
     val locationHelper = remember { LocationHelper(context) }
+    val lifecycleOwner = remember(context) { context as? ComponentActivity }
+    var foreground by remember {
+        mutableStateOf(
+            lifecycleOwner?.lifecycle?.currentState?.isAtLeast(Lifecycle.State.RESUMED) == true,
+        )
+    }
+    DisposableEffect(lifecycleOwner) {
+        val owner = lifecycleOwner
+        if (owner == null) {
+            foreground = true
+            onDispose { }
+        } else {
+            val observer = LifecycleEventObserver { _, _ ->
+                foreground = owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+            }
+            owner.lifecycle.addObserver(observer)
+            foreground = owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
+            onDispose { owner.lifecycle.removeObserver(observer) }
+        }
+    }
     var debugOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
     var voteOpen by remember { mutableStateOf(false) }
@@ -221,7 +245,8 @@ fun YingBianRoot() {
 
     // 前台自动感知：有定位权限时每分钟看一次，到点提示打卡，偏离提示改行程。
     // 不做后台定位、不上传轨迹；App 不在前台就不会跑。
-    LaunchedEffect(repoVersion) {
+    LaunchedEffect(repoVersion, foreground) {
+        if (!foreground) return@LaunchedEffect
         while (true) {
             delay(60_000)
             if (controller.plan == null || controller.loading) continue
@@ -489,7 +514,7 @@ fun YingBianRoot() {
             result = result,
             onCheckin = {
                 controller.dismissAutoPrompt()
-                controller.openCheckin()
+                controller.openCheckin(result.atNodeId)
             },
             onFix = { controller.openAutoPromptFix() },
             onDismiss = { controller.dismissAutoPrompt() },
@@ -546,6 +571,7 @@ fun YingBianRoot() {
             loading = controller.checkinLoading,
             error = controller.checkinError,
             selectedSchemeId = controller.checkinSelectedId,
+            initialNodeId = controller.checkinInitialNodeId,
             onCheckin = { nodeId, minutes, personId ->
                 scope.launch { controller.submitCheckin(nodeId, minutes, personId) }
             },

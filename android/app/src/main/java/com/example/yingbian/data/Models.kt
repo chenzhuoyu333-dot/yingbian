@@ -206,6 +206,7 @@ data class LocateResult(
     /** 人就在当前目标点 250 米内：可以提示“到了，打卡吗” */
     val arrived: Boolean = false,
     val shouldNodeTitle: String,
+    val shouldNodeId: String = "",
     val driftMinutes: Int,
     val schemes: List<RepairScheme>,
 ) {
@@ -622,6 +623,7 @@ object PlanJson {
             atDistanceM = data.optInt("atDistanceM", 0),
             arrived = data.optBoolean("arrived", false),
             shouldNodeTitle = data.optString("shouldNodeTitle", ""),
+            shouldNodeId = data.optString("shouldNodeId", ""),
             driftMinutes = data.optInt("driftMinutes", 0),
             schemes = schemes,
         )
