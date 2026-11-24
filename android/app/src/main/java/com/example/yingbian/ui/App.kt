@@ -71,7 +71,6 @@ fun YingBianRoot() {
     var debugOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
     var voteOpen by remember { mutableStateOf(false) }
-    var newPlanOpen by remember { mutableStateOf(false) }
     var activityOpen by remember { mutableStateOf(false) }
     var patrolOpen by remember { mutableStateOf(false) }
     // 队友的住宿/停留节点状态
@@ -517,24 +516,6 @@ fun YingBianRoot() {
             onSelectScheme = { controller.selectCheckinScheme(it) },
             onApply = { scope.launch { controller.applyCheckinScheme() } },
             onDismiss = { controller.closeCheckin() },
-        )
-    }
-
-    if (newPlanOpen) {
-        NewPlanDialog(
-            busy = controller.loading,
-            error = controller.error,
-            onGenerate = { text, startDate, days, lodging, avoidWalking ->
-                scope.launch {
-                    controller.createFromText(text, startDate, days, lodging, avoidWalking)
-                    if (controller.error == null) {
-                        newPlanOpen = false
-                        controller.generateNote?.let { Toast.makeText(context, it, Toast.LENGTH_SHORT).show() }
-                        controller.clearGenerateNote()
-                    }
-                }
-            },
-            onDismiss = { newPlanOpen = false },
         )
     }
 

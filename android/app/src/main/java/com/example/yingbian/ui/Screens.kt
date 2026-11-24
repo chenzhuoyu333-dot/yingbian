@@ -54,6 +54,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.example.yingbian.data.ActivityRow
 import com.example.yingbian.data.CheckinResult
 import com.example.yingbian.data.Impact
@@ -453,10 +454,14 @@ fun NewPlanScreen(
                 Text("🗓", fontSize = 16.sp)
                 Spacer(Modifier.width(10.dp))
                 Text(
-                    text = if (startDate.isBlank() && endDate.isBlank()) {
+                    text = if (startDate.isBlank()) {
                         "选择起止日期"
+                    } else if (endDate.isBlank() || endDate == startDate) {
+                        // 只选一天：明确标成单日，避免用户以为能生成多日
+                        "$startDate · 单日"
                     } else {
-                        "$startDate → $endDate"
+                        "$startDate → $endDate · 共 " +
+                            (daysBetween(startDate, endDate) + 1) + " 天"
                     },
                     fontSize = 14.sp,
                     color = if (startDate.isBlank()) Muted else Ink,
@@ -588,8 +593,8 @@ fun NewPlanScreen(
 
         Spacer(Modifier.height(24.dp))
         Button(
-            onClick = { onCreate(city, startDate, endDate, text, startPlace, startLat, startLng, lodging, pace, maxTransitMin) },
-            enabled = !busy && city.isNotBlank() && startDate.isNotBlank() && endDate.isNotBlank(),
+            onClick = { onCreate(city, startDate, endDate.ifBlank { startDate }, text, startPlace, startLat, startLng, lodging, pace, maxTransitMin) },
+            enabled = !busy && city.isNotBlank() && startDate.isNotBlank(),
             modifier = Modifier.fillMaxWidth().height(48.dp),
         ) {
             Text(if (busy) "生成中…" else "生成行程", fontSize = 15.sp)
@@ -610,14 +615,29 @@ fun NewPlanScreen(
     }
 
     if (dateOpen) {
-        DateRangeDialog(
-            onPick = { start, end ->
-                startDate = start
-                endDate = end
-                dateOpen = false
-            },
-            onDismiss = { dateOpen = false },
-        )
+        // 用区间日历（点出发日、点结束日，中间连起来），比系统选择器直观
+        Dialog(onDismissRequest = { dateOpen = false }) {
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                color = Color.White,
+                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+            ) {
+                DateRangeCalendar(
+                    startIso = startDate.ifBlank { todayIso() },
+                    endIso = endDate.ifBlank { null },
+                    flexible = false,
+                    todayIso = todayIso(),
+                    onFlexibleChange = { },
+                    onSelect = { start, end ->
+                        startDate = start
+                        // 只点了出发日也算单日行程，不再让按钮一直是灰的
+                        endDate = end ?: start
+                    },
+                    onBack = { dateOpen = false },
+                    onConfirm = { dateOpen = false },
+                )
+            }
+        }
     }
 }
 
@@ -705,46 +725,7 @@ fun RegionPickerDialog(
     )
 }
 
-/** 起止日期：Material3 的日期范围选择器 */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun DateRangeDialog(
-    onPick: (String, String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val state = rememberDateRangePickerState()
 
-    DatePickerDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    val start = state.selectedStartDateMillis
-                    val end = state.selectedEndDateMillis
-                    if (start != null && end != null) {
-                        onPick(formatMillis(start), formatMillis(end))
-                    }
-                },
-            ) { Text("确定") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
-    ) {
-        DateRangePicker(
-            state = state,
-            title = { Text("选择起止日期", modifier = Modifier.padding(16.dp)) },
-            showModeToggle = false,
-            modifier = Modifier.height(460.dp),
-        )
-    }
-}
-
-/** 毫秒 → yyyy-MM-dd（按 UTC 取，避免时区把日期算偏一天） */
-private fun formatMillis(millis: Long): String {
-    val date = java.util.Date(millis)
-    val fmt = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
-    fmt.timeZone = java.util.TimeZone.getTimeZone("UTC")
-    return fmt.format(date)
-}
 
 /**
  * 生成提示：告诉用户"你点名的必去点没排进去"或"自检发现了什么"。
