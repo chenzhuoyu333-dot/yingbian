@@ -105,6 +105,8 @@ fun PlanScreen(
     onRefreshWeather: () -> Unit = {},
     onEditLodging: () -> Unit = {},
     onAdjustStay: (PlanNode) -> Unit = {},
+    onAddNode: () -> Unit = {},
+    onDeleteNode: (PlanNode) -> Unit = {},
 ) {
 
     // 现在是几点（每 30 秒刷新一次，用来画"现在"游标）
@@ -230,6 +232,13 @@ fun PlanScreen(
                         EdgeLine(edgeBetween(plan, node, dayNodes[index + 1]))
                     }
                 }
+            }
+            item {
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = onAddNode,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("＋ 加一站", fontSize = 13.sp) }
             }
             item { Spacer(Modifier.height(8.dp)) }
         }
@@ -1751,6 +1760,7 @@ fun StayDialog(
     busy: Boolean,
     onSave: (Int) -> Unit,
     onDismiss: () -> Unit,
+    onDelete: () -> Unit = {},
 ) {
     var minutes by remember { mutableStateOf(node.durationMin.toString()) }
     AlertDialog(
@@ -1782,7 +1792,15 @@ fun StayDialog(
                 enabled = !busy && (minutes.toIntOrNull() ?: 0) >= 15,
             ) { Text(if (busy) "保存中…" else "保存") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        dismissButton = {
+            Row {
+                // 删掉这一站：和"改停留"放在一起，用户不用去别处找
+                TextButton(onClick = onDelete, enabled = !busy) {
+                    Text("删掉这一站", fontSize = 12.sp, color = Color(0xFFE5484D))
+                }
+                TextButton(onClick = onDismiss) { Text("取消") }
+            }
+        },
     )
 }
 

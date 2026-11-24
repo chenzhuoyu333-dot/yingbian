@@ -12,6 +12,11 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -102,6 +107,8 @@ fun YingBianRoot() {
     var stayNode by remember { mutableStateOf<PlanNode?>(null) }
     // 我的自动寻找服务器状态
     var findingServer by remember { mutableStateOf(false) }
+    var addNodeOpen by remember { mutableStateOf(false) }
+    var addNodeText by remember { mutableStateOf("") }
     var findHint by remember { mutableStateOf("") }
 
     /** 把一条管家提醒映射成既有的变化处理流程 */
@@ -678,6 +685,47 @@ fun YingBianRoot() {
                 onDismiss = { patrolOpen = false },
             )
         }
+    }
+
+    if (addNodeOpen) {
+        AlertDialog(
+            onDismissRequest = { addNodeOpen = false },
+            title = { Text("加一站") },
+            text = {
+                Column {
+                    Text("写个地名，我按真实通勤插进去，后面的点会顺延。", fontSize = 12.sp, color = Muted)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = addNodeText,
+                        onValueChange = { addNodeText = it },
+                        placeholder = { Text("比如「西湖音乐喷泉」", fontSize = 12.sp) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val title = addNodeText.trim()
+                        if (title.isNotBlank()) {
+                            addNodeOpen = false
+                            scope.launch {
+                                controller.addNodeHere(title)
+                                val err = controller.error
+                                if (err != null) {
+                                    Toast.makeText(context, err, Toast.LENGTH_LONG).show()
+                                } else {
+                                    Toast.makeText(context, "已加上「" + title + "」", Toast.LENGTH_SHORT).show()
+                                }
+                                controller.clearGenerateNote()
+                            }
+                        }
+                    },
+                ) { Text("加上") }
+            },
+            dismissButton = { TextButton(onClick = { addNodeOpen = false }) { Text("取消") } },
+        )
     }
 
     if (settingsOpen) {

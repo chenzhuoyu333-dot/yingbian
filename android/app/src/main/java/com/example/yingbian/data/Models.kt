@@ -213,6 +213,12 @@ data class LocateResult(
     val isBehind: Boolean get() = status == "behind"
 }
 
+/** 一次站点增删的结果：新计划 + 提示 */
+data class EditResult(
+    val plan: Plan,
+    val warnings: List<String>,
+)
+
 /** 一条管家提醒 */
 data class PatrolAlert(
     val kind: String,       // behind | weather | closing | tight
@@ -628,6 +634,12 @@ object PlanJson {
             schemes = schemes,
         )
     }
+
+    fun parseEdit(data: JSONObject): EditResult =
+        EditResult(
+            plan = parsePlan(data.getJSONObject("plan")),
+            warnings = data.optJSONArray("warnings")?.strings().orEmpty(),
+        )
 
     fun parsePatrol(data: JSONObject): PatrolResult =
         PatrolResult(

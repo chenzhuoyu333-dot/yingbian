@@ -34,6 +34,8 @@ from yingbian.poi import choose_route, find_by_name
 from yingbian.regions import load_regions
 from yingbian.patrol import patrol as run_patrol
 from yingbian.discovery import start as start_discovery
+from yingbian.edit import add_node as plan_add_node
+from yingbian.edit import remove_node as plan_remove_node
 from yingbian.repair import RepairResult, apply_actions
 from yingbian.weather import fetch_weather
 
@@ -811,6 +813,85 @@ def post_repair(plan_id: str, body: dict = Body(...)):
         "blockedNode": None,
         "message": "",
     })
+
+
+@app.post("/api/plan/{plan_id}/nodes")
+def post_add_node(plan_id: str, body: dict = Body(...)):
+    """在某一站之后加一站。
+
+    用户看着行程说"这里我想加一站"，系统按真实通勤把这一站塞进依赖图，
+    后面的点按差额整体顺延 —— 不是让他回去改提示词重来。
+
+    请求：{title, afterNodeId?, stayMin?, city?, memberId?, expectedVersion?}
+    """
+    plan = _plan_or_404(plan_id)
+    if plan is None:
+        return _error("NOT_FOUND", "计划不存在", 404)
+
+    conflict = _version_guard(plan, body)
+    if conflict is not None:
+        return conflict
+
+    city = str(body.get("city") or "").strip()
+    if not city:
+        # 没给城市就用行程标题里的城市名猜一下；猜不到就报错，别用默认城市
+        city = str((plan.title or "").split(" ")[-1] or "").strip()
+    try:
+        result = plan_add_node(
+            plan,
+            title=str(body.get("title") or ""),
+            city=city,
+            after_node_id=(str(body.get("afterNodeId") or "").strip() or None),
+            stay_min=int(body.get("stayMin") or 60),
+        )
+    except Exception as exc:
+        return _error("ADD_NODE_FAILED", str(exc))
+
+    new_plan = result["plan"]
+    _commit_plan(plan_id, new_plan, body, f"加了一站「{body.get('title')}」")
+    return _ok(
+        {
+            "plan": PLANS[plan_id].to_dict(),
+            "nodeId": result["nodeId"],
+            "version": PLANS[plan_id].version,
+            "warnings": result.get("warnings") or [],
+        }
+    )
+
+
+@app.delete("/api/plan/{plan_id}/nodes/{node_id}")
+def delete_node(plan_id: str, node_id: str, expectedVersion: int | None = Query(default=None)):
+    """删掉一站，前后两站重新连起来并重算通勤。"""
+    plan = _plan_or_404(plan_id)
+    if plan is None:
+        return _error("NOT_FOUND", "计划不存在", 404)
+
+    if expectedVersion is not None and expectedVersion != plan.version:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "ok": False,
+                "error": {
+                    "code": "VERSION_CONFLICT",
+                    "message": f"这份计划已被改过（当前 v{plan.version}），先刷新再删",
+                },
+            },
+        )
+    try:
+        result = plan_remove_node(plan, node_id)
+    except Exception as exc:
+        return _error("REMOVE_NODE_FAILED", str(exc))
+
+    new_plan = result["plan"]
+    _commit_plan(plan_id, new_plan, {}, f"删掉了「{result.get('removed')}」")
+    return _ok(
+        {
+            "plan": PLANS[plan_id].to_dict(),
+            "removed": result.get("removed"),
+            "version": PLANS[plan_id].version,
+            "warnings": result.get("warnings") or [],
+        }
+    )
 
 
 @app.post("/api/plan/{plan_id}/apply")

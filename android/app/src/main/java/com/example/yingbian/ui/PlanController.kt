@@ -646,6 +646,61 @@ class PlanController(
         }
     }
 
+    /** 在当前方案上加一站 */
+    suspend fun addNodeHere(title: String, afterNodeId: String? = null, stayMin: Int = 60) {
+        if (title.isBlank()) return
+        loading = true
+        error = null
+        try {
+            val base = plan ?: return
+            val result = repo.addNode(
+                title = title,
+                city = cityOf(base),
+                afterNodeId = afterNodeId,
+                stayMin = stayMin,
+            )
+            plan = result.plan
+            record("加了一站「" + title + "」")
+            result.warnings.firstOrNull()?.let { generateNote = it }
+            // 增删站点不是一次"方案"，通知/待办重新等变化后再生成
+            notifications = emptyList()
+            todos = emptyList()
+            todoDone = emptySet()
+        } catch (exception: Exception) {
+            error = exception.message ?: "加站失败"
+        } finally {
+            loading = false
+        }
+    }
+
+    /** 删掉某一站 */
+    suspend fun removeNodeAt(nodeId: String) {
+        val base = plan ?: return
+        val title = base.node(nodeId)?.title ?: ""
+        loading = true
+        error = null
+        try {
+            val result = repo.removeNode(nodeId)
+            plan = result.plan
+            record("删掉了「" + title + "」")
+            notifications = emptyList()
+            todos = emptyList()
+            todoDone = emptySet()
+        } catch (exception: Exception) {
+            error = exception.message ?: "删除失败"
+        } finally {
+            loading = false
+        }
+    }
+
+    /** 从标题里猜城市（"2026-11-25 杭州 3 日行程" → 杭州），猜不到给空 */
+    private fun cityOf(plan: Plan): String {
+        val parts = plan.title.replace("（据偏好生成）", "").trim().split(" ")
+        return parts.firstOrNull { it.endsWith("市") || it.length in 2..3 && it !in listOf("日行程") }
+            ?.removeSuffix("市")
+            ?: ""
+    }
+
     /** 把"来不及了/落后"变成一次延后事件，让引擎给出改法 */
     suspend fun reportDelay(nodeId: String, minutes: Int) {
         if (plan == null || nodeId.isBlank()) return

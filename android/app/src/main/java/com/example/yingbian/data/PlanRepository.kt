@@ -16,6 +16,17 @@ interface PlanRepository {
     suspend fun generate(prefs: GeneratePrefs): Plan
     suspend fun sendEvent(scenario: DemoScenario = DemoScenario.RAIN): Impact
 
+    /** 在方案上加一站（按真实通勤插进依赖图，后面的点顺延） */
+    suspend fun addNode(
+        title: String,
+        city: String,
+        afterNodeId: String? = null,
+        stayMin: Int = 60,
+    ): EditResult
+
+    /** 删掉一站（前后重连并重算通勤） */
+    suspend fun removeNode(nodeId: String): EditResult
+
     /** 某个节点延后若干分钟（管家的"来不及了/落后"提醒走这条路） */
     suspend fun sendDelay(nodeId: String, minutes: Int): Impact
     suspend fun repair(scenario: DemoScenario = DemoScenario.RAIN): RepairResult
@@ -135,6 +146,17 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
         current = loaded
         return loaded
     }
+
+
+    override suspend fun addNode(
+        title: String,
+        city: String,
+        afterNodeId: String?,
+        stayMin: Int,
+    ): EditResult = throw IOException("离线模式无法增删站点，请连上后端")
+
+    override suspend fun removeNode(nodeId: String): EditResult =
+        throw IOException("离线模式无法增删站点，请连上后端")
 
 
     override suspend fun sendDelay(nodeId: String, minutes: Int): Impact {
@@ -556,6 +578,37 @@ class RemotePlanRepository(
         planVersion = raw.optInt("version", 1)
         savePlan(raw)
         return PlanJson.parsePlan(raw)
+    }
+
+    override suspend fun addNode(
+        title: String,
+        city: String,
+        afterNodeId: String?,
+        stayMin: Int,
+    ): EditResult {
+        val body = JSONObject()
+            .put("title", title)
+            .put("city", city)
+            .put("stayMin", stayMin)
+            .put("memberId", settings.memberId)
+            .put("expectedVersion", planVersion)
+        if (!afterNodeId.isNullOrBlank()) body.put("afterNodeId", afterNodeId)
+        val data = request("POST", "/api/plan/$planId/nodes", body)
+        acceptEditedPlan(data)
+        return PlanJson.parseEdit(data)
+    }
+
+    override suspend fun removeNode(nodeId: String): EditResult {
+        val data = request("DELETE", "/api/plan/$planId/nodes/$nodeId?expectedVersion=$planVersion")
+        acceptEditedPlan(data)
+        return PlanJson.parseEdit(data)
+    }
+
+    private fun acceptEditedPlan(data: JSONObject) {
+        val raw = data.optJSONObject("plan") ?: return
+        planId = raw.optString("planId", planId).ifBlank { planId }
+        planVersion = raw.optInt("version", planVersion)
+        savePlan(raw)
     }
 
     override suspend fun sendDelay(nodeId: String, minutes: Int): Impact {
