@@ -646,15 +646,17 @@ fun NewPlanScreen(
                 modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
             ) {
                 DateRangeCalendar(
-                    startIso = startDate.ifBlank { todayIso() },
+                    startIso = startDate,
                     endIso = endDate.ifBlank { null },
                     flexible = false,
                     todayIso = todayIso(),
                     onFlexibleChange = { },
                     onSelect = { start, end ->
                         startDate = start
-                        // 只点了出发日也算单日行程，不再让按钮一直是灰的
-                        endDate = end ?: start
+                        // 第一次点击只记录出发日；第二次点击才写返程日。
+                        // 如果这里把 null 直接写成 start，下一次点击会被当成重新选择，
+                        // 结果区间永远只有一天。
+                        endDate = end.orEmpty()
                     },
                     onBack = { dateOpen = false },
                     onConfirm = { dateOpen = false },

@@ -142,14 +142,14 @@ fun DateRangeCalendar(
             endIso = endIso,
             todayIso = todayIso,
             onPick = { iso ->
-                val message = pickDate(iso, startIso, endIso, onSelect)
-                if (message.isNotBlank()) notice = message
+                notice = pickDate(iso, startIso, endIso, onSelect)
             },
         )
 
         Text(
             text = when {
                 notice.isNotBlank() -> notice
+                startIso.isBlank() -> "先点出发日，再点返程日；只选一天就是当天往返"
                 endIso != null -> "共 ${daysBetween(startIso, endIso)} 天 · 最晚可选 ${addDaysIso(startIso, MAX_TRIP_DAYS - 1)}"
                 flexible -> "只固定出发日，天数按你文字里说的算"
                 else -> "再点一天选返程日；只选一天就是当天往返"
@@ -334,6 +334,10 @@ private fun pickDate(
     onSelect: (String, String?) -> Unit,
 ): String {
     return when {
+        startIso.isBlank() -> {
+            onSelect(iso, null)
+            ""
+        }
         endIso == null -> {
             when {
                 iso == startIso -> {
