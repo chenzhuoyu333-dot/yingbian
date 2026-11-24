@@ -14,11 +14,7 @@ android {
         minSdk = 24
         targetSdk = 37
         versionCode = 5
-<<<<<<< HEAD
-        versionName = "1.1.3"
-=======
         versionName = "1.2"
->>>>>>> ee2138e (﻿fix: 采纳产品体检报告中的 P1-4 / P3-4，并升版本号到 1.2)
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
