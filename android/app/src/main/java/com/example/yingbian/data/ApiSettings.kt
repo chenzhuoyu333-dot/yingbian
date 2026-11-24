@@ -41,6 +41,11 @@ class ApiSettings(context: Context) {
         get() = prefs.getBoolean(KEY_MOCK, ApiConfig.defaultMock)
         set(value) = prefs.edit().putBoolean(KEY_MOCK, value).apply()
 
+    /** 上次打开的行程；重开 App 时接着看这一份，而不是回到内置演示 */
+    var lastPlanId: String
+        get() = prefs.getString(KEY_LAST_PLAN, "").orEmpty()
+        set(value) = prefs.edit().putString(KEY_LAST_PLAN, value.trim()).apply()
+
     val hasCustomBase: Boolean
         get() = prefs.getString(KEY_BASE, null) != null
 
@@ -81,6 +86,7 @@ class ApiSettings(context: Context) {
         const val KEY_MOCK = "use_mock"
         const val KEY_MEMBER_ID = "member_id"
         const val KEY_MEMBER_NAME = "member_name"
+        const val KEY_LAST_PLAN = "last_plan_id"
     }
 }
 

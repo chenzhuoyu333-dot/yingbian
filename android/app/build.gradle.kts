@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.yingbian"
         minSdk = 24
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -36,7 +36,7 @@ android {
             //   3) App 内「连接设置」的运行时覆盖（prefs 优先于 BuildConfig）
             //      → 演示当天 IP 变了，在设置里改一下即可，不用重新打包
             // ⚠️ IP 会变，每次演示前用 ipconfig 确认 WLAN 的 IPv4 地址。
-            val baseUrl = (project.findProperty("baseUrl") as String?) ?: "http://10.195.151.83:8000"
+            val baseUrl = (project.findProperty("baseUrl") as String?) ?: "http://10.195.115.203:8000"
             buildConfigField("String", "DEFAULT_BASE", "\"$baseUrl\"")
             buildConfigField("boolean", "DEFAULT_MOCK", "false")
         }

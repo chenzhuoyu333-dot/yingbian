@@ -453,7 +453,7 @@ class RemotePlanRepository(
      * 都必须打到新计划上，否则会去改内置的那份，演示就串了。
      */
     @Volatile
-    private var planId = "p_sat_guzhen"
+    private var planId = settings.lastPlanId
 
     /** 客户端看到的最新版本号，apply 时作为 expectedVersion 发回去 */
     @Volatile
@@ -520,6 +520,13 @@ class RemotePlanRepository(
     }
 
     override suspend fun loadPlan(): Plan {
+        if (planId.isBlank()) {
+            val items = plans()
+            planId = items.firstOrNull { !it.builtin }?.planId
+                ?: items.firstOrNull()?.planId
+                ?: ""
+        }
+        if (planId.isBlank()) throw IOException("还没有行程，先新建一份")
         val data = request("GET", "/api/plan/$planId")
         val raw = data.getJSONObject("plan")
         savePlan(raw)
@@ -543,6 +550,7 @@ class RemotePlanRepository(
         val raw = data.getJSONObject("plan")
         // 切到新生成的计划：后面所有请求都要打到它身上
         planId = raw.optString("planId", planId).ifBlank { planId }
+        settings.lastPlanId = planId
         planVersion = raw.optInt("version", 1)
         savePlan(raw)
         return PlanJson.parsePlan(raw)
@@ -729,6 +737,7 @@ class RemotePlanRepository(
         val raw = data.getJSONObject("plan")
         // 每次生成是一个新计划，切到它，后面的下雨/方案都作用在它身上
         this.planId = raw.optString("planId", this.planId).ifBlank { this.planId }
+        settings.lastPlanId = this.planId
         planVersion = raw.optInt("version", 1)
         savePlan(raw)
         return PlanJson.parsePlan(raw)
@@ -736,6 +745,7 @@ class RemotePlanRepository(
 
     override suspend fun openPlan(planId: String): Plan {
         this.planId = planId
+        settings.lastPlanId = planId
         return loadPlan()
     }
 
@@ -764,7 +774,8 @@ class RemotePlanRepository(
         request("DELETE", "/api/plans/$planId")
         // 删掉的正好是当前这份，就退回默认计划
         if (planId == this.planId) {
-            this.planId = "p_sat_guzhen"
+            this.planId = ""
+            settings.lastPlanId = ""
         }
     }
 

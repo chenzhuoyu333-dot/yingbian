@@ -125,18 +125,8 @@ fun YingBianRoot() {
         controller.loadRegions()
     }
 
-    /** 定位检查：拿当前位置问后端我现在该在哪，落后就给改法 */
-    suspend fun useMyLocationForLocate() {
-        val point = withContext(Dispatchers.IO) { locationHelper.lastKnown() }
-        if (point == null) {
-            Toast.makeText(context, "没取到定位，无法做定位检查", Toast.LENGTH_LONG).show()
-        } else {
-            controller.checkLocation(point.first, point.second)
-        }
-    }
-
     suspend fun refreshWeatherFromLocation() {
-        val point = withContext(Dispatchers.IO) { locationHelper.lastKnown() }
+        val point = withContext(Dispatchers.IO) { locationHelper.currentLocation() }
         if (point == null) {
             Toast.makeText(context, "没取到定位，仍可查看行程本身", Toast.LENGTH_LONG).show()
         } else {
@@ -159,6 +149,43 @@ fun YingBianRoot() {
             scope.launch { refreshWeatherFromLocation() }
         } else {
             locationLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                ),
+            )
+        }
+    }
+
+    /** 定位检查：拿当前位置问后端我现在该在哪，落后就给改法 */
+    suspend fun runLocateCheck() {
+        val point = withContext(Dispatchers.IO) { locationHelper.currentLocation() }
+        if (point == null) {
+            Toast.makeText(
+                context,
+                "没取到定位：请确认手机定位已打开、并允许本应用使用定位",
+                Toast.LENGTH_LONG,
+            ).show()
+        } else {
+            controller.checkLocation(point.first, point.second)
+        }
+    }
+
+    val locateLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        if (grants.values.any { it }) {
+            scope.launch { runLocateCheck() }
+        } else {
+            Toast.makeText(context, "没有定位权限，无法判断你是否到达", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun useMyLocationForLocate() {
+        if (locationHelper.hasPermission()) {
+            scope.launch { runLocateCheck() }
+        } else {
+            locateLauncher.launch(
                 arrayOf(
                     Manifest.permission.ACCESS_FINE_LOCATION,
                     Manifest.permission.ACCESS_COARSE_LOCATION,
@@ -199,7 +226,7 @@ fun YingBianRoot() {
             delay(60_000)
             if (controller.plan == null || controller.loading) continue
             if (!locationHelper.hasPermission()) continue
-            val point = withContext(Dispatchers.IO) { locationHelper.lastKnown() } ?: continue
+            val point = withContext(Dispatchers.IO) { locationHelper.currentLocation(5_000) } ?: continue
             controller.autoLocate(point.first, point.second)
         }
     }
@@ -315,6 +342,11 @@ fun YingBianRoot() {
                         onOpenDebug = { debugOpen = true },
                     )
 
+                    controller.screen == AppScreen.Plan && controller.plan == null -> NoActivePlanScreen(
+                        onCreate = { scope.launch { openNewPlanPage() } },
+                        onOpenHome = { controller.openScreen(AppScreen.Home) },
+                    )
+
                     controller.plan == null -> LoadingScreen()
                     else -> {
                         val plan = controller.plan!!
@@ -365,6 +397,7 @@ fun YingBianRoot() {
                                 weatherError = controller.weatherError,
                                 weatherLoading = controller.weatherLoading,
                                 onUseLocation = { useMyLocation() },
+                                onRefreshWeather = { scope.launch { controller.refreshPlanWeather() } },
                                 onVote = {
                                     scope.launch {
                                         controller.startVote()
@@ -372,7 +405,7 @@ fun YingBianRoot() {
                                     }
                                 },
                                 onActivity = { activityOpen = true },
-                                onLocate = { scope.launch { useMyLocationForLocate() } },
+                                onLocate = { useMyLocationForLocate() },
                                 locateLoading = controller.locateLoading,
                                 patrol = controller.patrolResult,
                                 patrolDismissed = controller.patrolDismissed,

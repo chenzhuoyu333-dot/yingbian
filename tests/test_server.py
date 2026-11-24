@@ -187,6 +187,13 @@ class ServerContractTest(unittest.TestCase):
         self.assertTrue(weather["fetchedAt"])
         self.assertIn("note", weather)
 
+    def test_demo_plan_does_not_fake_weather_without_coords(self):
+        """内置示范计划没有坐标，就不能拿默认城市天气冒充"""
+        body = self.client.get(f"/api/plan/{self.plan_id}/weather").json()
+        data = body["data"]
+        self.assertFalse(data["available"])
+        self.assertIn("没有地点坐标", data["reason"])
+
     def test_reset_restores_version_one(self):
         repair_body = self.client.post(
             f"/api/plan/{self.plan_id}/repair",

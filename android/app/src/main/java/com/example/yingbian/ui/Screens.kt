@@ -100,6 +100,7 @@ fun PlanScreen(
     weatherError: String? = null,
     weatherLoading: Boolean = false,
     onUseLocation: () -> Unit = {},
+    onRefreshWeather: () -> Unit = {},
     onEditLodging: () -> Unit = {},
     onAdjustStay: (PlanNode) -> Unit = {},
 ) {
@@ -116,6 +117,7 @@ fun PlanScreen(
                     loading = weatherLoading,
                     error = weatherError,
                     onUseLocation = onUseLocation,
+                    onRefresh = onRefreshWeather,
                     onDismiss = { weatherOpen = false },
                 )
             }
@@ -285,6 +287,20 @@ private fun WeatherChip(weather: Weather, onClick: () -> Unit) {
                     fontWeight = FontWeight.SemiBold,
                     color = Color(0xFF8A5A00),
                 )
+            } else {
+                val source = when {
+                    weather.source.contains("和风") -> "和风"
+                    weather.source.contains("高德") -> "高德"
+                    weather.source.isBlank() -> ""
+                    else -> "实况"
+                }
+                if (source.isNotBlank()) {
+                    Text(
+                        text = "  $source",
+                        fontSize = 10.sp,
+                        color = Muted,
+                    )
+                }
             }
             Spacer(Modifier.weight(1f))
             Text(text = "详情 ›", fontSize = 10.sp, color = Muted)
@@ -300,6 +316,7 @@ private fun WeatherDialog(
     loading: Boolean,
     error: String?,
     onUseLocation: () -> Unit,
+    onRefresh: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -340,8 +357,14 @@ private fun WeatherDialog(
                 if (!error.isNullOrBlank()) DetailLine("定位错误", error)
 
                 Spacer(Modifier.height(8.dp))
-                TextButton(onClick = onUseLocation, contentPadding = PaddingValues(0.dp)) {
-                    Text(if (loading) "定位中…" else "用我的位置重新查询", fontSize = 11.sp)
+                Row {
+                    TextButton(onClick = onRefresh, contentPadding = PaddingValues(0.dp)) {
+                        Text(if (loading) "刷新中…" else "刷新行程天气", fontSize = 11.sp)
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    TextButton(onClick = onUseLocation, contentPadding = PaddingValues(0.dp)) {
+                        Text(if (loading) "定位中…" else "用我的位置查询", fontSize = 11.sp)
+                    }
                 }
             }
         },
@@ -1433,6 +1456,29 @@ fun EmptyScreen(onLoad: () -> Unit) {
     }
 }
 
+/** 行程页没有“当前行程”时的空态：不再默认塞一份内置演示 */
+@Composable
+fun NoActivePlanScreen(onCreate: () -> Unit, onOpenHome: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text("还没有正在执行的行程", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Text(
+            "先新建一份，生成后会直接出现在这里；天气和定位也只会对真实行程生效。",
+            fontSize = 13.sp,
+            color = Muted,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 8.dp, bottom = 18.dp),
+        )
+        Button(onClick = onCreate, modifier = Modifier.fillMaxWidth()) {
+            Text("新建行程", fontSize = 14.sp)
+        }
+        TextButton(onClick = onOpenHome) { Text("去计划页看看", fontSize = 12.sp, color = Muted) }
+    }
+}
+
 @Composable
 fun LoadingScreen() {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -2009,22 +2055,23 @@ fun HomeScreen(
     Column(modifier = Modifier.fillMaxSize()) {
         // 顶部已经有标题和加号了，这里不再重复一行"我的计划 + 新建"
 
-        if (mine.isEmpty() && !loading) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("还没有你自己的行程", fontSize = 14.sp, color = Muted)
-                    Spacer(Modifier.height(6.dp))
-                    Text("点右上角＋，说一句你想怎么玩", fontSize = 12.sp, color = Muted)
-                }
-            }
-            return@Column
-        }
-
         LazyColumn(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
+            if (mine.isEmpty() && !loading) {
+                item {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text("还没有你自己的行程", fontSize = 14.sp, color = Muted)
+                        Spacer(Modifier.height(6.dp))
+                        Text("点右上角＋，说一句你想怎么玩", fontSize = 12.sp, color = Muted)
+                    }
+                }
+            }
             if (mine.isNotEmpty()) {
                 item { SectionHeader("我的行程", "只放你生成/打开过的，不和示范混在一起") }
             }

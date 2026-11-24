@@ -507,6 +507,16 @@ class PlanController(
 
     suspend fun removePlan(planId: String) {
         runCatching { repo.deletePlan(planId) }
+        if (plan?.planId == planId) {
+            plan = null
+            weather = null
+            impact = null
+            schemes = emptyList()
+            selectedSchemeId = null
+            notifications = emptyList()
+            todos = emptyList()
+            screen = AppScreen.Home
+        }
         loadHome()
     }
     private var planBeforeApply: Plan? = null
@@ -515,13 +525,17 @@ class PlanController(
     val selectedScheme: RepairScheme?
         get() = schemes.firstOrNull { it.id == selectedSchemeId }
 
-    private suspend fun loadWeather(lat: Double? = null, lng: Double? = null) {
+    /** 只按“这份行程在哪”查天气；没有坐标就不显示，不拿杭州默认值冒充 */
+    suspend fun refreshPlanWeather() {
+        weatherLoading = true
+        weatherError = null
         try {
-            weather = repo.weather(lat, lng)
-            weatherError = null
-            weatherLocation = if (lat != null && lng != null) "我的位置" else "行程所在地"
+            weather = repo.planWeather()
+            weatherLocation = weather?.place?.takeIf { it.isNotBlank() } ?: "行程所在地"
         } catch (exception: Exception) {
             weatherError = exception.message ?: "天气获取失败"
+        } finally {
+            weatherLoading = false
         }
     }
 
@@ -548,14 +562,29 @@ class PlanController(
         offline = false
         clearCheckin()
         try {
-            plan = repo.loadPlan()
-            loadWeather()
+            val summaries = repo.plans()
+            homePlans = summaries
+            // 自己的行程优先；mock 模式才允许直接进内置演示
+            val own = summaries.filterNot { it.builtin }
+            val candidates = if (settings?.useMock == true) summaries else own
+            val last = settings?.lastPlanId.orEmpty()
+            val target = candidates.firstOrNull { it.planId == last } ?: candidates.firstOrNull()
+            if (target == null) {
+                plan = null
+                weather = null
+                weatherLocation = "行程所在地"
+            } else {
+                plan = repo.openPlan(target.planId)
+                refreshPlanWeather()
+            }
         } catch (exception: Exception) {
             val cached = repo.cachedPlan()
             if (cached != null) {
                 plan = cached
                 offline = true
+                weather = null
             } else {
+                plan = null
                 error = exception.message ?: "载入失败"
             }
         } finally {
@@ -620,7 +649,7 @@ class PlanController(
             blockedMessage = null
             blockedNode = null
             screen = AppScreen.Plan
-            loadWeather()
+            refreshPlanWeather()
             generateNote = "已生成 ${plan?.nodes?.size ?: 0} 个节点，其中 ${
                 plan?.nodes?.count { it.confirmed } ?: 0
             } 个已锁定"
@@ -978,7 +1007,7 @@ class PlanController(
             lastScheme = null
             planBeforeApply = null
             screen = AppScreen.Plan
-            loadWeather()
+            refreshPlanWeather()
         } catch (exception: Exception) {
             error = exception.message ?: "恢复失败"
         } finally {
