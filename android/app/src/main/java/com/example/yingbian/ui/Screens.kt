@@ -41,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,6 +62,7 @@ import com.example.yingbian.data.Impact
 import com.example.yingbian.data.LocateResult
 import com.example.yingbian.data.MemberInfo
 import com.example.yingbian.data.Plan
+import com.example.yingbian.data.parseMinutes
 import com.example.yingbian.data.PlanEdge
 import com.example.yingbian.data.PlanNode
 import com.example.yingbian.data.PlanSummary
@@ -104,6 +106,15 @@ fun PlanScreen(
     onEditLodging: () -> Unit = {},
     onAdjustStay: (PlanNode) -> Unit = {},
 ) {
+
+    // 现在是几点（每 30 秒刷新一次，用来画"现在"游标）
+    var nowMinutes by remember { mutableStateOf(currentMinuteOfDay()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(30_000)
+            nowMinutes = currentMinuteOfDay()
+        }
+    }
     var weatherOpen by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -194,11 +205,25 @@ fun PlanScreen(
                 item(key = "day-header-$date") {
                     DayHeader(date, dayIndex + 1, dayNodes.size)
                 }
+                // 只在"今天"那天画游标，插在第一个还没开始的节点之前
+                val cursorBeforeId = if (date == todayIso()) {
+                    dayNodes.firstOrNull { parseMinutes(it.start) > nowMinutes }?.id
+                } else {
+                    null
+                }
                 itemsIndexed(dayNodes, key = { _, node -> node.id }) { index, node ->
+                    if (node.id == cursorBeforeId) {
+                        NowCursor(nowMinutes)
+                    }
                     NodeCard(
                         node = node,
                         state = impact?.stateOf(node.id) ?: "ok",
                         shift = impact?.shiftOf(node.id) ?: 0,
+                        phase = when {
+                            parseMinutes(node.end) <= nowMinutes -> "past"
+                            parseMinutes(node.start) <= nowMinutes -> "now"
+                            else -> "future"
+                        },
                         onClick = { onAdjustStay(node) },
                     )
                     if (index < dayNodes.lastIndex) {
@@ -2358,7 +2383,12 @@ fun NewPlanDialog(
     }
 }
 
-private fun todayIso(): String =
+fun currentMinuteOfDay(): Int {
+    val c = java.util.Calendar.getInstance()
+    return c.get(java.util.Calendar.HOUR_OF_DAY) * 60 + c.get(java.util.Calendar.MINUTE)
+}
+
+fun todayIso(): String =
     SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date())
 
 @Composable
@@ -2446,4 +2476,101 @@ fun PatrolDialog(
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("先不管") } },
     )
+}
+
+/**
+ * 今天没有行程时的首页。
+ *
+ * 不做成空白页：上面是所在地天气（按定位查），下面一句话告诉用户
+ * "今天空着"以及"可以现在安排"。
+ */
+@Composable
+fun NoPlanTodayScreen(
+    weather: Weather?,
+    weatherLoading: Boolean,
+    weatherError: String?,
+    today: String,
+    onNewPlan: () -> Unit,
+    onRefreshWeather: () -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Spacer(Modifier.height(40.dp))
+
+        // 所在地天气（只有定位成功才有）
+        when {
+            weather != null -> {
+                Text(
+                    text = weather.place.ifBlank { "你所在的地方" },
+                    fontSize = 13.sp,
+                    color = Muted,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = weather.text.ifBlank { "天气" },
+                    fontSize = 34.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Ink,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = buildString {
+                        if (weather.rainProb > 0) {
+                            append("降雨 ")
+                            append((weather.rainProb * 100).toInt())
+                            append("%")
+                        } else {
+                            append("今天不太会下雨")
+                        }
+                    },
+                    fontSize = 14.sp,
+                    color = Muted,
+                )
+                if (weather.isDemo) {
+                    Spacer(Modifier.height(4.dp))
+                    Text("演示数据", fontSize = 10.sp, color = Muted)
+                }
+            }
+            weatherLoading -> {
+                CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                Spacer(Modifier.height(10.dp))
+                Text("正在取你所在地的天气…", fontSize = 12.sp, color = Muted)
+            }
+            else -> {
+                Text("取不到天气", fontSize = 13.sp, color = Muted)
+                if (!weatherError.isNullOrBlank()) {
+                    Text(weatherError, fontSize = 11.sp, color = Muted)
+                }
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = onRefreshWeather) { Text("用我的位置再试", fontSize = 12.sp) }
+            }
+        }
+
+        Spacer(Modifier.height(34.dp))
+
+        Text("今天没有安排", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "想出去的话，说一句你想怎么玩，我来排。",
+            fontSize = 13.sp,
+            color = Muted,
+            textAlign = TextAlign.Center,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(today, fontSize = 11.sp, color = Muted)
+
+        Spacer(Modifier.height(26.dp))
+        Button(onClick = onNewPlan, modifier = Modifier.fillMaxWidth().height(48.dp)) {
+            Text("安排一件事", fontSize = 15.sp)
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = "也可以点右上角设置，看看历史行程",
+            fontSize = 11.sp,
+            color = Muted,
+        )
+        Spacer(Modifier.height(40.dp))
+    }
 }

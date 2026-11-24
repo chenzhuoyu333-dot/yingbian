@@ -83,10 +83,12 @@ class PlanController(
     var error by mutableStateOf<String?>(null)
         private set
     var empty by mutableStateOf(false)
+    /** 今天没有行程（首页空态用，不和"加载失败"混在一起） */
+    var todayEmpty by mutableStateOf(false)
         private set
     var offline by mutableStateOf(false)
         private set
-    var screen by mutableStateOf(AppScreen.Home)
+    var screen by mutableStateOf(AppScreen.Plan)
         private set
     var showImpact by mutableStateOf(false)
         private set
@@ -564,6 +566,43 @@ class PlanController(
             weatherError = exception.message ?: "天气获取失败"
         } finally {
             weatherLoading = false
+        }
+    }
+
+    /**
+     * 首页 = 今天的行程。
+     *
+     * 产品上的取舍：打开 App 看到"今天要走的这份"，而不是"历史行程列表"。
+     * 今天没有就明确说没有（并给当地天气），而不是停在上一份行程上。
+     */
+    suspend fun loadToday() {
+        empty = false
+        todayEmpty = false
+        error = null
+        offline = false
+        loading = true
+        try {
+            val all = repo.plans()
+            val today = todayIso()
+            val mine = all.firstOrNull { !it.builtin && it.date == today }
+            if (mine == null) {
+                plan = null
+                todayEmpty = true
+                // 空态也要天气：按定位查，取不到就留空
+                loadWeather()
+            } else {
+                openPlan(mine.planId)
+            }
+        } catch (exception: Exception) {
+            val cached = repo.cachedPlan()
+            if (cached != null) {
+                plan = cached
+                offline = true
+            } else {
+                error = exception.message ?: "载入失败"
+            }
+        } finally {
+            loading = false
         }
     }
 

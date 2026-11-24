@@ -32,6 +32,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -104,12 +105,32 @@ fun StateBadge(state: String) {
 }
 
 @Composable
-fun NodeCard(node: PlanNode, state: String, shift: Int, onClick: () -> Unit = {}) {
+fun NodeCard(
+    node: PlanNode,
+    state: String,
+    shift: Int,
+    phase: String = "future",   // past 已过 / now 进行中 / future 未到
+    onClick: () -> Unit = {},
+) {
+    // 已过的节点压暗：一眼看出"走到哪了"
+    val dimmed = phase == "past"
+    val highlight = phase == "now"
     val accent = stateColor(state)
     val overnight = node.overnight
     val hotelUnknown = overnight && node.place.isBlank()
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(
+                if (highlight) {
+                    Modifier
+                        .background(Color(0xFFFFF6E9), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 4.dp, vertical = 3.dp)
+                } else {
+                    Modifier.padding(vertical = 2.dp)
+                }
+            )
+            .alpha(if (dimmed) 0.45f else 1f),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(
@@ -459,4 +480,34 @@ fun transportLabel(mode: String): String = when (mode) {
     "transit" -> "公交"
     "estimate" -> "约"
     else -> "通行"
+}
+
+/**
+ * "现在"游标：一条红线 + 当前时间。
+ *
+ * 它让时间轴随时间往下走 —— 用户不用看表就知道自己走到哪了，
+ * 这也是"计划是活的"最直接的证据。
+ */
+@Composable
+fun NowCursor(nowMinutes: Int) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "%02d:%02d".format(nowMinutes / 60, nowMinutes % 60),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFFE5484D),
+            modifier = Modifier.width(56.dp),
+        )
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .height(2.dp)
+                .background(Color(0xFFE5484D), RoundedCornerShape(1.dp)),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text("现在", fontSize = 10.sp, color = Color(0xFFE5484D))
+    }
 }

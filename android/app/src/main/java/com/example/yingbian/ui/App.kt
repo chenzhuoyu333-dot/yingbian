@@ -220,7 +220,7 @@ fun YingBianRoot() {
 
     LaunchedEffect(repoVersion) {
         controller.loadHome()
-        controller.load()
+        controller.loadToday()
         controller.joinTrip()
         // 打开就把天气/收口查一遍，不用等第一轮 60 秒巡检
         controller.runPatrol()
@@ -312,10 +312,11 @@ fun YingBianRoot() {
         },
         bottomBar = {
             NavigationBar {
+                // 只留三个：行程（今天）/ 方案 / 我的
+                // 历史列表挪到「我的」，「提醒」并进行程页顶部管家卡
                 listOf(
-                    AppScreen.Home,
                     AppScreen.Plan,
-                    AppScreen.Notify,
+                    AppScreen.Scheme,
                     AppScreen.Profile,
                 ).forEach { screen ->
                     NavigationBarItem(
@@ -334,6 +335,15 @@ fun YingBianRoot() {
             }
             Box(modifier = Modifier.weight(1f)) {
                 when {
+                    controller.todayEmpty -> NoPlanTodayScreen(
+                        weather = controller.weather,
+                        weatherLoading = controller.weatherLoading,
+                        weatherError = controller.weatherError,
+                        today = todayIso(),
+                        onNewPlan = { scope.launch { openNewPlanPage() } },
+                        onRefreshWeather = { scope.launch { refreshWeatherFromLocation() } },
+                    )
+
                     controller.empty -> EmptyScreen(onLoad = { scope.launch { controller.load() } })
                     controller.error != null -> ErrorScreen(
                         message = controller.error ?: "",
