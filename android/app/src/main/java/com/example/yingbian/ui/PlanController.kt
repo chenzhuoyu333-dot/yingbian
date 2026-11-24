@@ -176,6 +176,9 @@ class PlanController(
 
     /** 进入行程时登记自己（幂等），并拉一次协作状态 */
     suspend fun joinTrip() {
+        // 没有当前行程时不要请求 /api/plan//members：那会生成空计划 ID，
+        // 在历史清空后的第一次启动里虽然被 runCatching 吞掉，但日志和状态都不干净。
+        if (plan == null) return
         runCatching { members = repo.join() }
         runCatching { vote = repo.voteState() }
         runCatching { activityRows = repo.activity() }
@@ -498,6 +501,7 @@ class PlanController(
             screen = AppScreen.Plan
             weather = runCatching { repo.planWeather() }.getOrNull()
             weather?.place?.takeIf { it.isNotBlank() }?.let { weatherLocation = it }
+            joinTrip()
         } catch (exception: Exception) {
             error = exception.message ?: "打开失败"
         } finally {

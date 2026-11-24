@@ -342,38 +342,41 @@ fun YingBianRoot() {
                         onOpenDebug = { debugOpen = true },
                     )
 
-                    controller.screen == AppScreen.Plan && controller.plan == null -> NoActivePlanScreen(
+                    // 新建页不依赖“当前已有行程”：历史清空后也必须能进入。
+                    controller.screen == AppScreen.NewPlan -> NewPlanScreen(
+                        regions = controller.regions,
+                        busy = controller.loading,
+                        error = controller.error,
+                        onLocate = {
+                            withContext(Dispatchers.IO) { locationHelper.lastKnown() }
+                        },
+                        onCreate = { city, start, end, text, place, lat, lng, lodging, pace, maxTransit ->
+                            scope.launch {
+                                controller.createTrip(
+                                    city, start, end, text, place, lat, lng, lodging, pace, maxTransit,
+                                )
+                                val note = controller.generateNote
+                                if (!note.isNullOrBlank()) {
+                                    Toast.makeText(context, note, Toast.LENGTH_SHORT).show()
+                                    controller.clearGenerateNote()
+                                }
+                            }
+                        },
+                    )
+
+                    controller.plan == null -> NoActivePlanScreen(
                         onCreate = { scope.launch { openNewPlanPage() } },
                         onOpenHome = { controller.openScreen(AppScreen.Home) },
                     )
 
-                    controller.plan == null -> LoadingScreen()
                     else -> {
                         val plan = controller.plan!!
                         when (controller.screen) {
                             // 首页在上面的分支已经处理掉了；这里兜底防止万一
                             AppScreen.Home -> LoadingScreen()
 
-                            AppScreen.NewPlan -> NewPlanScreen(
-                                regions = controller.regions,
-                                busy = controller.loading,
-                                error = controller.error,
-                                onLocate = {
-                                    withContext(Dispatchers.IO) { locationHelper.lastKnown() }
-                                },
-                                onCreate = { city, start, end, text, place, lat, lng, lodging, pace, maxTransit ->
-                                    scope.launch {
-                                        controller.createTrip(
-                                            city, start, end, text, place, lat, lng, lodging, pace, maxTransit,
-                                        )
-                                        val note = controller.generateNote
-                                        if (!note.isNullOrBlank()) {
-                                            Toast.makeText(context, note, Toast.LENGTH_SHORT).show()
-                                            controller.clearGenerateNote()
-                                        }
-                                    }
-                                },
-                            )
+                            // 新建页已在外层提前处理，这里只是保证 when 完整。
+                            AppScreen.NewPlan -> LoadingScreen()
 
                             AppScreen.Plan -> PlanScreen(
                                 plan = plan,
