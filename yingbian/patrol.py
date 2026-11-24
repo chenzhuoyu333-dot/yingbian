@@ -23,7 +23,6 @@ from .weather import fetch_weather
 
 RAIN_ALERT = 0.6          # 降雨概率超过这个就提醒
 CLOSING_WARN_MIN = 40     # 离最晚进入时间不足这么多分钟就提醒
-MIN_SLACK_MIN = 5         # 缓冲小于这个视为"没有缓冲"
 
 
 def _alert(
@@ -143,42 +142,6 @@ def _check_closing(plan: Plan, now: int) -> list[dict]:
                 )
             )
     return alerts
-
-
-def _check_tight(plan: Plan) -> list[dict]:
-    """全程都没有缓冲才提醒。
-
-    注意：单段 slack=0 是生成器的正常结果（时间刚好等于通勤），
-    不能当作异常。只有**所有**相邻段都没有缓冲，才值得说一句
-    "今天一处延误就会连锁"。
-    """
-    nodes = [node for node in plan.nodes if not node.dropped]
-    if len(nodes) < 3:
-        return []
-
-    slacks: list[int] = []
-    for index in range(len(nodes) - 1):
-        current, nxt = nodes[index], nodes[index + 1]
-        edge = next(
-            (e for e in plan.edges if e.src == current.id and e.dst == nxt.id), None
-        )
-        if edge is None or edge.min_gap <= 0:
-            continue
-        slacks.append(nxt.start - current.end - edge.min_gap)
-
-    if not slacks or any(slack >= MIN_SLACK_MIN for slack in slacks):
-        return []
-
-    return [
-        _alert(
-            kind="tight",
-            title="今天全程没有缓冲",
-            detail=f"{len(slacks)} 段通勤都是卡着点排的，任何一处延误都会连锁",
-            node_id=nodes[0].id,
-            severity="info",
-            action="可以整体留一点余量",
-        )
-    ]
 
 
 def patrol(
