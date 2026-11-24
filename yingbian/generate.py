@@ -859,9 +859,15 @@ def generate(prefs: Preferences) -> dict:
                     avoid_walking=prefs.avoid_walking,
                 )
                 hotel_start = last_leave + int(hotel_route.get("durationMin") or 0)
-                hotel_end = 23 * 60 + 59
-                if hotel_start >= hotel_end:
-                    hotel_start = hotel_end - 1
+                # 到店可能已过午夜：保留真实时间，不再伪装成 23:58。
+                # 用户需要知道"今晚可能赶不到"，而不是看到一个人造时间。
+                if hotel_start >= 23 * 60 + 59:
+                    warnings.append(
+                        f"第 {day} 晚预计 "
+                        f"{hotel_start // 60:02d}:{hotel_start % 60:02d} 才到住宿"
+                        "（已过午夜），请确认是否调整最后一站或换近一点的住处"
+                    )
+                hotel_end = max(hotel_start + 1, 23 * 60 + 59)
                 hotel_title = f"{lodging_poi.name} · 住宿（第 {day} 晚）"
                 hotel_place = lodging_poi.name
                 hotel_note = "用户指定的住宿，已作为第二天的出发点"
