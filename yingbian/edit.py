@@ -105,9 +105,16 @@ def add_node(
 
     prev_poi = _node_poi(anchor)
     transit = 0
+    transit_estimated = False
     if prev_poi is not None:
-        route = route_plan(prev_poi, poi, city)
-        transit = int(route.get("durationMin") or 0)
+        # 路径接口抖动不能让"加一站"整体失败：退化成估算并明确标注
+        try:
+            route = route_plan(prev_poi, poi, city)
+            transit = int(route.get("durationMin") or 0)
+            transit_estimated = str(route.get("source") or "") != "amap"
+        except Exception:
+            transit = _guess_minutes(prev_poi, poi)
+            transit_estimated = True
 
     arrive = anchor.end + transit
     leave = arrive + stay
@@ -121,6 +128,9 @@ def add_node(
             leave = arrive + stay
         if leave > close_min:
             warnings.append(f"「{poi.name}」在 {format_time(close_min)} 关门，可能逛不完")
+
+    if transit_estimated:
+        warnings.append("通勤时间暂时是估算的（地图接口没返回），确认后再看一次会更准")
 
     new_id = f"n_add_{len(working.nodes) + 1}"
     while working.find(new_id) is not None:
@@ -196,8 +206,11 @@ def remove_node(plan: Plan, node_id: str) -> dict[str, Any]:
     if prev is not None and nxt is not None:
         prev_poi, next_poi = _node_poi(prev), _node_poi(nxt)
         if prev_poi is not None and next_poi is not None:
-            route = route_plan(prev_poi, next_poi, "")
-            transit = int(route.get("durationMin") or 0)
+            try:
+                route = route_plan(prev_poi, next_poi, "")
+                transit = int(route.get("durationMin") or 0)
+            except Exception:
+                transit = _guess_minutes(prev_poi, next_poi)
         want = prev.end + transit
         delta = want - nxt.start
         _shift_after(working, date, nxt.start, delta)
