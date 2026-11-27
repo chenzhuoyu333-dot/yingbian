@@ -46,6 +46,26 @@ class ApiSettings(context: Context) {
         get() = prefs.getString(KEY_LAST_PLAN, "").orEmpty()
         set(value) = prefs.edit().putString(KEY_LAST_PLAN, value.trim()).apply()
 
+    /** 行程中后台自动检测位置（前台服务，会有常驻通知）。 */
+    var trackingEnabled: Boolean
+        get() = prefs.getBoolean(KEY_TRACKING, false)
+        set(value) = prefs.edit().putBoolean(KEY_TRACKING, value).apply()
+
+    /** 本机已确认到达的节点；只存在本机，不上传，也不等于“锁定”。 */
+    fun arrivedNodes(planId: String): Set<String> {
+        if (planId.isBlank()) return emptySet()
+        return prefs.getString(KEY_ARRIVED + planId, "").orEmpty()
+            .split("|")
+            .filter { it.isNotBlank() }
+            .toSet()
+    }
+
+    fun markArrived(planId: String, nodeId: String) {
+        if (planId.isBlank() || nodeId.isBlank()) return
+        val merged = arrivedNodes(planId) + nodeId
+        prefs.edit().putString(KEY_ARRIVED + planId, merged.joinToString("|")).apply()
+    }
+
     val hasCustomBase: Boolean
         get() = prefs.getString(KEY_BASE, null) != null
 
@@ -87,6 +107,8 @@ class ApiSettings(context: Context) {
         const val KEY_MEMBER_ID = "member_id"
         const val KEY_MEMBER_NAME = "member_name"
         const val KEY_LAST_PLAN = "last_plan_id"
+        const val KEY_TRACKING = "trip_tracking"
+        const val KEY_ARRIVED = "arrived_nodes_"
     }
 }
 

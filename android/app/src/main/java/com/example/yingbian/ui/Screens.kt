@@ -38,6 +38,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -89,6 +90,13 @@ fun PlanScreen(
     onImpact: () -> Unit,
     onSchemes: () -> Unit,
     onCheckin: () -> Unit = {},
+    onArrive: (PlanNode) -> Unit = {},
+    arrivedNodeIds: Set<String> = emptySet(),
+    arrivalBusyNodeId: String? = null,
+    locateHint: LocateResult? = null,
+    onOpenHintFix: () -> Unit = {},
+    trackingOn: Boolean = false,
+    onToggleTracking: (Boolean) -> Unit = {},
     onVote: () -> Unit = {},
     onActivity: () -> Unit = {},
     onLocate: () -> Unit = {},
@@ -120,6 +128,7 @@ fun PlanScreen(
         }
     }
     var weatherOpen by remember { mutableStateOf(false) }
+    var locatePanelOpen by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         PlanHeader(
@@ -127,11 +136,29 @@ fun PlanScreen(
             memberCount = memberCount,
             voteOpen = voteOpen,
             locateLoading = locateLoading,
+            trackingOn = trackingOn,
             onWeather = { weatherOpen = true },
-            onLocate = onLocate,
+            onLocate = { locatePanelOpen = true },
             onActivity = onActivity,
             onVote = onVote,
         )
+        if (locatePanelOpen) {
+            LocatePanel(
+                trackingOn = trackingOn,
+                locateLoading = locateLoading,
+                hint = locateHint,
+                onCheckNow = {
+                    locatePanelOpen = false
+                    onLocate()
+                },
+                onToggleTracking = onToggleTracking,
+                onManualCheckin = {
+                    locatePanelOpen = false
+                    onCheckin()
+                },
+                onDismiss = { locatePanelOpen = false },
+            )
+        }
         if (weatherOpen && weather != null) {
             WeatherDialog(
                 weather = weather,
@@ -183,6 +210,16 @@ fun PlanScreen(
                         node = node,
                         state = impact?.stateOf(node.id) ?: "ok",
                         shift = impact?.shiftOf(node.id) ?: 0,
+                        arrived = arrivedNodeIds.contains(node.id),
+                        hint = when {
+                            locateHint == null -> null
+                            locateHint.arrived && locateHint.atNodeId == node.id &&
+                                !arrivedNodeIds.contains(node.id) -> "定位显示你已到 · 点一下勾选确认"
+                            locateHint.isBehind && locateHint.shouldNodeId == node.id ->
+                                "落后 ${locateHint.driftMinutes} 分钟 · 点这里看怎么改"
+                            else -> null
+                        },
+                        busy = arrivalBusyNodeId == node.id,
                         phase = when {
                             parseMinutes(node.end) <= nowMinutes -> "past"
                             parseMinutes(node.start) <= nowMinutes -> "now"
@@ -190,6 +227,10 @@ fun PlanScreen(
                         },
                         onClick = {
                             if (node.overnight) onEditLodging(node) else onAdjustStay(node)
+                        },
+                        onArrive = { onArrive(node) },
+                        onHintFix = {
+                            if (locateHint?.arrived == true) onArrive(node) else onOpenHintFix()
                         },
                     )
                     if (index < dayNodes.lastIndex) {
@@ -221,7 +262,6 @@ fun PlanScreen(
             onRain = onRain,
             onImpact = onImpact,
             onSchemes = onSchemes,
-            onCheckin = onCheckin,
         )
     }
 }
@@ -299,6 +339,7 @@ private fun PlanHeader(
     memberCount: Int,
     voteOpen: Boolean,
     locateLoading: Boolean,
+    trackingOn: Boolean,
     onWeather: () -> Unit,
     onLocate: () -> Unit,
     onActivity: () -> Unit,
@@ -324,7 +365,11 @@ private fun PlanHeader(
             )
         }
         HeaderChip(
-            text = if (locateLoading) "定位中…" else "定位",
+            text = when {
+                locateLoading -> "定位中…"
+                trackingOn -> "定位 · 开"
+                else -> "定位"
+            },
             onClick = onLocate,
             enabled = !locateLoading,
             modifier = Modifier.size(72.dp),
@@ -480,6 +525,67 @@ private fun DetailLine(label: String, value: String) {
         Text("$label：", fontSize = 11.sp, color = Muted)
         Text(value, fontSize = 11.sp, color = Ink)
     }
+}
+
+/** 定位入口：检查一次、后台常驻开关、定位不准时的手动兜底。 */
+@Composable
+private fun LocatePanel(
+    trackingOn: Boolean,
+    locateLoading: Boolean,
+    hint: LocateResult?,
+    onCheckNow: () -> Unit,
+    onToggleTracking: (Boolean) -> Unit,
+    onManualCheckin: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("定位与到达") },
+        text = {
+            Column {
+                Text(
+                    "有定位权限时，每 60 秒看一次位置：到目标点 250 米内，行程卡片会提示你勾选确认；落后 10 分钟以上，卡片会提示怎么改。",
+                    fontSize = 12.sp,
+                    color = Muted,
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("行程中后台检测", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                        Text(
+                            "开启后状态栏会有一条常驻通知；App 切到后台也会继续判断。",
+                            fontSize = 10.sp,
+                            color = Muted,
+                        )
+                    }
+                    Switch(checked = trackingOn, onCheckedChange = onToggleTracking)
+                }
+                if (hint != null) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        if (hint.arrived) {
+                            "刚刚检测到你在「${hint.atNodeTitle}」${hint.atDistanceM} 米内。"
+                        } else {
+                            "刚刚检测到落后约 ${hint.driftMinutes} 分钟。"
+                        },
+                        fontSize = 12.sp,
+                        color = ConflictOrange,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                TextButton(onClick = onManualCheckin, contentPadding = PaddingValues(0.dp)) {
+                    Text("定位不准？手动修正到达时间", fontSize = 11.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onCheckNow, enabled = !locateLoading) {
+                Text(if (locateLoading) "定位中…" else "现在检查一次")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } },
+    )
 }
 
 /**
@@ -891,6 +997,13 @@ fun LocateDialog(
                             }
                         }
                     }
+                } else if (result.isBehind) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "暂时没有安全的自动改法：这一站或后面的站点已锁定，或者已经来不及了。可以先解锁站点，或手动调整后面的安排。",
+                        fontSize = 11.sp,
+                        color = Muted,
+                    )
                 }
             }
         },
@@ -921,20 +1034,13 @@ private fun PlanBottomBar(
     onRain: () -> Unit,
     onImpact: () -> Unit,
     onSchemes: () -> Unit,
-    onCheckin: () -> Unit,
     weatherAlert: Boolean = false,
 ) {
+    // 没有真实变化时不占底部空间；到达由每张卡片的勾选完成。
+    if (impact == null && !weatherAlert && !loading) return
     Surface(color = Color.White, shadowElevation = 10.dp) {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
             val enabled = !loading && !offline
-            Button(
-                onClick = onCheckin,
-                enabled = enabled,
-                modifier = Modifier.fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 9.dp),
-            ) {
-                Text("我到了", fontSize = 13.sp)
-            }
             if (loading) {
                 Text(
                     text = "正在重算…",
@@ -945,7 +1051,6 @@ private fun PlanBottomBar(
                 )
             } else if (impact != null) {
                 // 只有真的检测到变化时才给“看影响 / 看方案”，不再常驻一个入口。
-                Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(
                         onClick = onImpact,
@@ -1015,11 +1120,20 @@ fun CheckinSheet(
         val target = plan.nodes.firstOrNull { it.id == initialNodeId }?.id
         mutableStateOf(
             target
-                ?: plan.nodes.firstOrNull { !it.confirmed }?.id
-                ?: plan.nodes.firstOrNull()?.id.orEmpty(),
+                ?: plan.nodes.firstOrNull { !it.confirmed && !it.overnight }?.id
+                ?: plan.nodes.firstOrNull { !it.overnight }?.id.orEmpty(),
         )
     }
-    var minutes by remember { mutableStateOf(0) }
+    var minutes by remember(nodeId) {
+        val node = plan.nodes.firstOrNull { it.id == nodeId }
+        val day = node?.date?.ifBlank { plan.date }.orEmpty()
+        val auto = if (node == null || (day.isNotBlank() && day != todayIso())) {
+            0
+        } else {
+            (currentMinuteOfDay() - parseMinutes(node.start)).coerceIn(0, 180)
+        }
+        mutableStateOf(auto)
+    }
     var memberLate by remember { mutableStateOf(false) }
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
@@ -1030,9 +1144,9 @@ fun CheckinSheet(
                 .padding(bottom = 28.dp)
                 .verticalScroll(rememberScrollState()),
         ) {
-            Text("我到了", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
+            Text("修正到达时间", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
             Text(
-                "只记录这一次主动打卡，不共享位置轨迹；晚到方案要你确认后才会改行程。",
+                "只有定位不准或没开定位时才需要手动改。已按当前时间自动算好晚到分钟，晚到方案要你确认后才会改行程。",
                 fontSize = 11.sp,
                 color = Muted,
                 modifier = Modifier.padding(top = 4.dp),
@@ -1042,7 +1156,7 @@ fun CheckinSheet(
             if (result == null) {
                 Text("到达哪个节点", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Ink)
                 Spacer(Modifier.height(6.dp))
-                plan.nodes.forEach { node ->
+                plan.nodes.filter { !it.overnight }.forEach { node ->
                     val picked = node.id == nodeId
                     val label = "${node.start}  ${node.displayTitle}${if (node.confirmed) "  · 已锁定" else ""}"
                     if (picked) {

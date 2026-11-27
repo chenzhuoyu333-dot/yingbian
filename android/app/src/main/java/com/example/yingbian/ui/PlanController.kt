@@ -22,6 +22,8 @@ import com.example.yingbian.data.RepairScheme
 import com.example.yingbian.data.UndoPreview
 import com.example.yingbian.data.VoteState
 import com.example.yingbian.data.Weather
+import com.example.yingbian.data.displayTitle
+import com.example.yingbian.data.parseMinutes
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -161,10 +163,24 @@ class PlanController(
         private set
     var locateLoading by mutableStateOf(false)
         private set
-    /** 前台自动定位发现的“到了/落后了”，用弹窗提醒，不需要用户主动点 */
-    var autoPrompt by mutableStateOf<LocateResult?>(null)
+    /** 自动定位发现的“到了/落后了”，只做卡片提示，不弹大窗 */
+    var locateHint by mutableStateOf<LocateResult?>(null)
         private set
-    private var autoPromptKey: String = ""
+    private var locateHintKey: String = ""
+    /** 本机勾选“已到达”的节点（和“锁定”不是一回事） */
+    private var arrivedRevision by mutableStateOf(0)
+    val arrivedNodeIds: Set<String>
+        get() {
+            arrivedRevision
+            return settings?.arrivedNodes(plan?.planId.orEmpty()).orEmpty()
+        }
+    var arrivalBusyNodeId by mutableStateOf<String?>(null)
+        private set
+    var arrivalNotice by mutableStateOf<String?>(null)
+        private set
+    /** 行程中后台自动检测；开着时状态栏会有一条常驻通知 */
+    var trackingOn by mutableStateOf(settings?.trackingEnabled == true)
+        private set
 
     val memberName: String
         get() = settings?.memberName ?: "我"
@@ -275,31 +291,104 @@ class PlanController(
      */
     suspend fun autoLocate(lat: Double, lng: Double, now: String? = null) {
         val result = runCatching { repo.locate(lat, lng, now) }.getOrNull() ?: return
-        if (!result.arrived && !result.isBehind) return
+        if (!result.arrived && !result.isBehind) {
+            locateHint = null
+            locateHintKey = ""
+            return
+        }
         val targetId = result.shouldNodeId.ifBlank { result.shouldNodeTitle }
         val key = if (result.arrived) "arrive:${result.atNodeId}" else "behind:$targetId"
-        if (key == autoPromptKey) return
-        autoPromptKey = key
-        autoPrompt = result
+        locateHint = result
+        if (key == locateHintKey) return
+        locateHintKey = key
         record(
-            if (result.arrived) "定位到「${result.atNodeTitle}」，提示打卡"
-            else "定位发现落后 ${result.driftMinutes} 分钟，提示改行程"
+            if (result.arrived) "定位到「${result.atNodeTitle}」，等你确认到达"
+            else "定位发现落后 ${result.driftMinutes} 分钟"
         )
     }
 
     private fun resetAutoLocatePrompt() {
-        autoPromptKey = ""
-        autoPrompt = null
+        locateHintKey = ""
+        locateHint = null
     }
 
-    fun dismissAutoPrompt() {
-        autoPrompt = null
+    fun dismissLocateHint() {
+        locateHintKey = ""
+        locateHint = null
     }
 
-    /** 用户在自动提醒里点“看看怎么改”：把同一条结果接到已有的方案弹窗 */
-    fun openAutoPromptFix() {
-        locateResult = autoPrompt
-        autoPrompt = null
+    /** 点卡片上的“看看怎么改”：接到已有的定位结果弹窗 */
+    fun openLocateHintFix() {
+        locateResult = locateHint
+        locateHint = null
+    }
+
+    fun clearArrivalNotice() {
+        arrivalNotice = null
+    }
+
+    fun setTracking(on: Boolean) {
+        trackingOn = on
+        settings?.trackingEnabled = on
+    }
+
+    /** 从通知栏“停止检测”回来时，把界面开关同步成真实状态 */
+    fun syncTracking(on: Boolean) {
+        trackingOn = on
+    }
+
+    /** 后台服务每 60 秒推来的结果，和前台自动检测走同一条展示逻辑 */
+    fun applyBackgroundLocate(result: LocateResult) {
+        if (!result.arrived && !result.isBehind) return
+        locateHint = result
+    }
+
+    /**
+     * 勾选“到了”：按当前时间自动算晚了几分钟，不需要用户再填。
+     * 准时就直接打勾；晚到才把方案弹出来让用户选。
+     */
+    suspend fun arrive(nodeId: String) {
+        val current = plan ?: return
+        val node = current.node(nodeId) ?: return
+        if (node.overnight || arrivalBusyNodeId != null) return
+        arrivalBusyNodeId = nodeId
+        arrivalNotice = null
+        try {
+            val minutes = lateMinutesFor(node, current)
+            val result = repo.checkin(nodeId, minutes)
+            markArrived(nodeId)
+            locateHint = null
+            locateHintKey = ""
+            record(
+                if (result.schemes.isEmpty()) "勾选到达「${node.displayTitle}」"
+                else "勾选到达「${node.displayTitle}」，晚到 ${result.minutes} 分钟"
+            )
+            if (result.schemes.isNotEmpty()) {
+                checkinResult = result
+                checkinSelectedId = result.schemes.firstOrNull()?.id
+                checkinInitialNodeId = nodeId
+                checkinOpen = true
+            } else {
+                arrivalNotice = "已到达 · ${node.displayTitle}"
+            }
+        } catch (exception: Exception) {
+            arrivalNotice = exception.message ?: "打卡失败"
+        } finally {
+            arrivalBusyNodeId = null
+        }
+    }
+
+    private fun lateMinutesFor(node: com.example.yingbian.data.PlanNode, current: Plan): Int {
+        val day = node.date.ifBlank { current.date }
+        val today = todayIso()
+        if (day.isNotBlank() && day != today) return 0
+        return (currentMinuteOfDay() - parseMinutes(node.start)).coerceIn(0, 180)
+    }
+
+    private fun markArrived(nodeId: String) {
+        val planId = plan?.planId.orEmpty()
+        settings?.markArrived(planId, nodeId)
+        arrivedRevision += 1
     }
 
     /**
@@ -881,13 +970,19 @@ class PlanController(
         checkinError = null
         try {
             val result = repo.checkin(nodeId, minutes, personId)
-            checkinResult = result
-            checkinSelectedId = result.schemes.firstOrNull()?.id
             val title = plan?.node(nodeId)?.title ?: nodeId
+            markArrived(nodeId)
             record(
                 if (result.schemes.isEmpty()) "在「$title」打卡，时间正好"
                 else "在「$title」打卡，晚到 ${result.minutes} 分钟"
             )
+            if (result.schemes.isEmpty() && personId == null) {
+                checkinOpen = false
+                arrivalNotice = "已到达 · $title"
+                return
+            }
+            checkinResult = result
+            checkinSelectedId = result.schemes.firstOrNull()?.id
         } catch (exception: Exception) {
             checkinError = exception.message ?: "打卡失败"
         } finally {

@@ -5,7 +5,9 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -43,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -58,12 +61,15 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.core.content.ContextCompat
 import com.example.yingbian.data.ApiConfig
 import com.example.yingbian.data.ApiSettings
 import com.example.yingbian.data.LocationHelper
 import com.example.yingbian.data.PlanNode
 import com.example.yingbian.data.PatrolAlert
 import com.example.yingbian.data.ServerDiscovery
+import com.example.yingbian.data.TrackBus
+import com.example.yingbian.data.TripTrackingService
 import com.example.yingbian.data.createRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -229,6 +235,75 @@ fun YingBianRoot() {
         }
     }
 
+    /** 行程中后台检测：前台服务 + 常驻通知，每 60 秒看一次位置。 */
+    fun startTripTracking() {
+        runCatching {
+            ContextCompat.startForegroundService(
+                context,
+                Intent(context, TripTrackingService::class.java),
+            )
+            controller.setTracking(true)
+            Toast.makeText(context, "已开启，状态栏会有一条常驻通知", Toast.LENGTH_SHORT).show()
+        }.onFailure { error ->
+            controller.setTracking(false)
+            Toast.makeText(context, "开启失败：${error.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    fun stopTripTracking() {
+        context.stopService(Intent(context, TripTrackingService::class.java))
+        controller.setTracking(false)
+    }
+
+    val notificationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { startTripTracking() }
+
+    val trackingLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { grants ->
+        if (grants.values.any { it }) {
+            if (Build.VERSION.SDK_INT >= 33 &&
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                startTripTracking()
+            }
+        } else {
+            Toast.makeText(context, "没有定位权限，无法在后台判断到达", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun requestTracking(on: Boolean) {
+        if (!on) {
+            stopTripTracking()
+            return
+        }
+        if (!locationHelper.hasPermission()) {
+            trackingLauncher.launch(
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION,
+                ),
+            )
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+        startTripTracking()
+    }
+
     // 空态也要天气：进到"今天没安排"时按定位取一次，取不到才显示"取不到天气"
     LaunchedEffect(controller.todayEmpty) {
         if (controller.todayEmpty && controller.weather == null) {
@@ -244,6 +319,17 @@ fun YingBianRoot() {
         controller.joinTrip()
         // 打开就把天气/收口查一遍，不用等第一轮 60 秒巡检
         controller.runPatrol()
+
+        // 上次开着“行程中检测”，这次打开 App 继续跑
+        if (settings.trackingEnabled && locationHelper.hasPermission()) {
+            runCatching {
+                ContextCompat.startForegroundService(
+                    context,
+                    Intent(context, TripTrackingService::class.java),
+                )
+                controller.setTracking(true)
+            }
+        }
 
         // 启动自愈：连不上就自己找后端（校园网 / 热点 / 任何 Wi-Fi 都试）
         if (!settings.useMock && controller.error != null) {
@@ -263,16 +349,34 @@ fun YingBianRoot() {
         controller.pollLoop()
     }
 
-    // 前台自动感知：有定位权限时每分钟看一次，到点提示打卡，偏离提示改行程。
-    // 不做后台定位、不上传轨迹；App 不在前台就不会跑。
+    // 前台自动感知：后台服务没开时，App 在前台就每分钟看一次。
+    // 开启“行程中检测”后交给前台服务，避免重复请求。
+    LaunchedEffect(foreground) {
+        if (foreground) controller.syncTracking(settings.trackingEnabled)
+    }
     LaunchedEffect(repoVersion, foreground) {
         if (!foreground) return@LaunchedEffect
         while (true) {
             delay(60_000)
             if (controller.plan == null || controller.loading) continue
+            if (controller.trackingOn) continue
             if (!locationHelper.hasPermission()) continue
             val point = withContext(Dispatchers.IO) { locationHelper.currentLocation(5_000) } ?: continue
             controller.autoLocate(point.first, point.second)
+        }
+    }
+
+    // 后台服务每 60 秒推一次结果，接到卡片提示上
+    val trackResult by TrackBus.results.collectAsState()
+    LaunchedEffect(trackResult) {
+        trackResult?.let { controller.applyBackgroundLocate(it) }
+    }
+
+    // 勾选到达后的轻提示（不弹窗打断）
+    LaunchedEffect(controller.arrivalNotice) {
+        controller.arrivalNotice?.let { message ->
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            controller.clearArrivalNotice()
         }
     }
 
@@ -434,6 +538,13 @@ fun YingBianRoot() {
                                 onImpact = { controller.openImpact() },
                                 onSchemes = { scope.launch { controller.loadSchemes() } },
                                 onCheckin = { controller.openCheckin() },
+                                onArrive = { node -> scope.launch { controller.arrive(node.id) } },
+                                arrivedNodeIds = controller.arrivedNodeIds,
+                                arrivalBusyNodeId = controller.arrivalBusyNodeId,
+                                locateHint = controller.locateHint,
+                                onOpenHintFix = { controller.openLocateHintFix() },
+                                trackingOn = controller.trackingOn,
+                                onToggleTracking = { on -> requestTracking(on) },
                                 weatherLocation = controller.weatherLocation,
                                 weatherError = controller.weatherError,
                                 weatherLoading = controller.weatherLoading,
@@ -532,17 +643,6 @@ fun YingBianRoot() {
                 }
             },
             onDismiss = { controller.cancelUndo() },
-        )
-    }
-    controller.autoPrompt?.let { result ->
-        AutoLocateDialog(
-            result = result,
-            onCheckin = {
-                controller.dismissAutoPrompt()
-                controller.openCheckin(result.atNodeId)
-            },
-            onFix = { controller.openAutoPromptFix() },
-            onDismiss = { controller.dismissAutoPrompt() },
         )
     }
     controller.autoWeatherAlert?.let { alert ->

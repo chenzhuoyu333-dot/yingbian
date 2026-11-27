@@ -3,6 +3,7 @@ package com.example.yingbian.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -33,6 +35,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -111,7 +114,12 @@ fun NodeCard(
     state: String,
     shift: Int,
     phase: String = "future",   // past 已过 / now 进行中 / future 未到
+    arrived: Boolean = false,
+    hint: String? = null,
+    busy: Boolean = false,
     onClick: () -> Unit = {},
+    onArrive: () -> Unit = {},
+    onHintFix: () -> Unit = {},
 ) {
     // 已过的节点压暗：一眼看出"走到哪了"
     val dimmed = phase == "past"
@@ -131,7 +139,13 @@ fun NodeCard(
                     Modifier.padding(vertical = 2.dp)
                 }
             )
-            .alpha(if (dimmed) 0.45f else 1f),
+            .alpha(
+                when {
+                    arrived -> 0.62f
+                    dimmed -> 0.45f
+                    else -> 1f
+                },
+            ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(
@@ -169,7 +183,12 @@ fun NodeCard(
             modifier = Modifier.weight(1f).clickable { onClick() },
             shape = RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(
-                containerColor = if (state == "ok") Color.White else accent.copy(alpha = 0.08f),
+                containerColor = when {
+                    arrived -> Color(0xFFF3F4F6)
+                    hint != null -> Color(0xFFFFF4E5)
+                    state == "ok" -> Color.White
+                    else -> accent.copy(alpha = 0.08f)
+                },
             ),
             elevation = CardDefaults.cardElevation(defaultElevation = if (state == "ok") 1.dp else 0.dp),
         ) {
@@ -180,8 +199,13 @@ fun NodeCard(
                         modifier = Modifier.weight(1f),
                         fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = Ink,
+                        color = if (arrived) Muted else Ink,
+                        textDecoration = if (arrived) TextDecoration.LineThrough else null,
                     )
+                    if (!overnight) {
+                        ArrivalTick(arrived = arrived, busy = busy, onArrive = onArrive)
+                        Spacer(Modifier.width(6.dp))
+                    }
                     if (node.confirmed) {
                         Icon(
                             imageVector = Icons.Default.Lock,
@@ -217,7 +241,57 @@ fun NodeCard(
                     fontSize = 12.sp,
                     color = Muted,
                 )
+                if (hint != null && !overnight) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = hint,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onHintFix() },
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = ConflictOrange,
+                    )
+                }
             }
+        }
+    }
+}
+
+/** 卡片右侧的到达勾选：未到是空心圈，到了是实心勾，计算中是转圈。 */
+@Composable
+private fun ArrivalTick(
+    arrived: Boolean,
+    busy: Boolean,
+    onArrive: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .size(24.dp)
+            .clip(CircleShape)
+            .background(if (arrived) OkGreen else Color.Transparent)
+            .border(1.5.dp, if (arrived) OkGreen else LineGrey, CircleShape)
+            .clickable(enabled = !busy && !arrived) { onArrive() },
+        contentAlignment = Alignment.Center,
+    ) {
+        when {
+            busy -> CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                strokeWidth = 1.8.dp,
+                color = OkGreen,
+            )
+            arrived -> Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = "已到达",
+                modifier = Modifier.size(15.dp),
+                tint = Color.White,
+            )
+            else -> Icon(
+                imageVector = Icons.Default.Check,
+                contentDescription = "勾选到达",
+                modifier = Modifier.size(13.dp),
+                tint = LineGrey,
+            )
         }
     }
 }
