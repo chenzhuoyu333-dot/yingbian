@@ -488,10 +488,10 @@ fun YingBianRoot() {
                         onLocate = {
                             withContext(Dispatchers.IO) { locationHelper.lastKnown() }
                         },
-                        onCreate = { city, start, end, text, place, lat, lng, lodging, pace, maxTransit ->
+                        onCreate = { city, start, end, text, place, lat, lng, pace, maxTransit ->
                             scope.launch {
                                 controller.createTrip(
-                                    city, start, end, text, place, lat, lng, lodging, pace, maxTransit,
+                                    city, start, end, text, place, lat, lng, "", pace, maxTransit,
                                 )
                                 val note = controller.generateNote
                                 if (!note.isNullOrBlank()) {
@@ -538,7 +538,7 @@ fun YingBianRoot() {
                                 onImpact = { controller.openImpact() },
                                 onSchemes = { scope.launch { controller.loadSchemes() } },
                                 onCheckin = { controller.openCheckin() },
-                                onArrive = { node -> scope.launch { controller.arrive(node.id) } },
+                                onArrive = { node -> scope.launch { controller.toggleArrival(node.id) } },
                                 arrivedNodeIds = controller.arrivedNodeIds,
                                 arrivalBusyNodeId = controller.arrivalBusyNodeId,
                                 locateHint = controller.locateHint,

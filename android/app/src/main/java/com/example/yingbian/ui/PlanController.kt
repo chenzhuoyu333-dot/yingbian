@@ -347,10 +347,19 @@ class PlanController(
      * 勾选“到了”：按当前时间自动算晚了几分钟，不需要用户再填。
      * 准时就直接打勾；晚到才把方案弹出来让用户选。
      */
-    suspend fun arrive(nodeId: String) {
+    suspend fun toggleArrival(nodeId: String) {
         val current = plan ?: return
         val node = current.node(nodeId) ?: return
         if (node.overnight || arrivalBusyNodeId != null) return
+        if (arrivedNodeIds.contains(nodeId)) {
+            settings?.unmarkArrived(current.planId, nodeId)
+            arrivedRevision += 1
+            locateHint = null
+            locateHintKey = ""
+            record("取消到达标记「${node.displayTitle}」")
+            arrivalNotice = "已取消 · ${node.displayTitle}"
+            return
+        }
         arrivalBusyNodeId = nodeId
         arrivalNotice = null
         try {

@@ -271,7 +271,7 @@ private fun ArrivalTick(
             .clip(CircleShape)
             .background(if (arrived) OkGreen else Color.Transparent)
             .border(1.5.dp, if (arrived) OkGreen else LineGrey, CircleShape)
-            .clickable(enabled = !busy && !arrived) { onArrive() },
+            .clickable(enabled = !busy) { onArrive() },
         contentAlignment = Alignment.Center,
     ) {
         when {
@@ -282,7 +282,7 @@ private fun ArrivalTick(
             )
             arrived -> Icon(
                 imageVector = Icons.Default.Check,
-                contentDescription = "已到达",
+                contentDescription = "取消到达",
                 modifier = Modifier.size(15.dp),
                 tint = Color.White,
             )

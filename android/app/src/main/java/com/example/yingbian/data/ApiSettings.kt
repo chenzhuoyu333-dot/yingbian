@@ -66,6 +66,12 @@ class ApiSettings(context: Context) {
         prefs.edit().putString(KEY_ARRIVED + planId, merged.joinToString("|")).apply()
     }
 
+    fun unmarkArrived(planId: String, nodeId: String) {
+        if (planId.isBlank() || nodeId.isBlank()) return
+        val left = arrivedNodes(planId) - nodeId
+        prefs.edit().putString(KEY_ARRIVED + planId, left.joinToString("|")).apply()
+    }
+
     val hasCustomBase: Boolean
         get() = prefs.getString(KEY_BASE, null) != null
 
