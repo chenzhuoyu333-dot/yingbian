@@ -552,38 +552,17 @@ fun NewPlanScreen(
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        locating = true
-                        // onLocate 是 suspend：必须在协程里调
-                        val point = try {
-                            onLocate()
-                        } finally {
-                            locating = false
-                        }
-                        if (point != null) {
-                            startLat = point.first
-                            startLng = point.second
-                            startPlace = "我的位置"
-                        }
-                    }
-                },
-                enabled = !locating,
-            ) {
-                Text(if (locating) "定位中…" else "用当前定位", fontSize = 12.sp)
-            }
-            Spacer(Modifier.width(10.dp))
-            if (startLat != null) {
-                Text("已用当前定位", fontSize = 11.sp, color = OkGreen)
-            } else if (startPlace.isNotBlank()) {
-                Text("从「" + startPlace + "」出发", fontSize = 11.sp, color = Muted)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = if (startPlace.isNotBlank()) {
+                "从「" + startPlace + "」出发"
             } else {
-                Text("不填就从市区默认位置开始", fontSize = 11.sp, color = Muted)
-            }
-        }
+                "不填就从市区默认位置开始"
+            },
+            fontSize = 11.sp,
+            color = Muted,
+            modifier = Modifier.padding(start = 2.dp),
+        )
 
         Spacer(Modifier.height(22.dp))
         Text("住在哪里？", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
