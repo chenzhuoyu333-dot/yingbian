@@ -1230,7 +1230,7 @@ fun SchemeScreen(
     onApply: () -> Unit,
 ) {
     if (schemes.isEmpty()) {
-        EmptyHint("还没有方案，先在行程页模拟一次下雨")
+        EmptyHint("还没有方案。行程出现真实变化时，这里会给出改法")
         return
     }
     Column(modifier = Modifier.fillMaxSize()) {

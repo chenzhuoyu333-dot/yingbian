@@ -290,7 +290,7 @@ fun YingBianRoot() {
                                 AppScreen.Home -> "我的计划"
                                 AppScreen.NewPlan -> "新建行程"
                                 AppScreen.Plan -> controller.plan?.title ?: "应变"
-                                AppScreen.Scheme -> "两套方案对比"
+                                AppScreen.Scheme -> "应变方案"
                                 AppScreen.Notify -> "提醒"
                                 AppScreen.Todo -> "待办清单"
                                 AppScreen.Profile -> "我的"
