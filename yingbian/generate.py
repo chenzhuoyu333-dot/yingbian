@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import date as Date, timedelta
 from pathlib import Path
@@ -99,6 +100,8 @@ class Preferences:
     prefer_high_rating: bool = True
     # 住宿：用户指定的酒店名或区域；空表示待定
     lodging: str = ""
+    # 按天的住宿（第 1 晚、第 2 晚…）；为空则整趟用 lodging
+    lodgings: list[str] = field(default_factory=list)
 
 
 def _blocked(poi: Poi, avoid: list[str]) -> bool:
@@ -154,6 +157,78 @@ def _first_leg_limit(
         return configured
     third = times[min(2, len(times) - 1)]
     return max(configured, min(120, third + 10))
+
+
+
+_DAY_MARK = re.compile(r"(?:第\s*(\d{1,2})\s*[天晚]|d(\d{1,2})\b|[Dd]ay\s*(\d{1,2}))", re.IGNORECASE)
+
+
+def _unique_lodging_names(names: list[str]) -> int:
+    """有几个不同的住宿名（用于决定摘要怎么说）。"""
+    return len({n for n in (names or []) if n})
+
+
+def parse_lodging(text: str, days: int) -> list[str]:
+    """把住宿输入解析成"按天的列表"。
+
+    支持这几种写法（都能识别）：
+        如家酒店                      → 整趟都住它
+        第1天 A，第2天 B               → 第1晚 A、第2晚 B
+        A / B / B                     → 按顺序一天一个
+        A；B                          → 同上
+    返回值长度 = days；缺的用最后一个已知值补齐，仍没有则为空字符串。
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return []
+
+    # 按换行/分号/斜杠/逗号切段，但保留"第N天"这类记号以便绑定
+    segments = [seg.strip(" 　·、,，;；/|") for seg in re.split(r"[\n\r；;|/]+|，|,", raw)]
+    segments = [seg for seg in segments if seg]
+
+    by_day: dict[int, str] = {}
+    sequential: list[str] = []
+    for seg in segments:
+        mark = _DAY_MARK.search(seg)
+        name = _DAY_MARK.sub("", seg).strip(" 　:：-·、,，")
+        if not name:
+            continue
+        if mark:
+            index = next((int(g) for g in mark.groups() if g), None)
+            if index and 1 <= index <= days:
+                by_day[index] = name
+            else:
+                sequential.append(name)
+        else:
+            sequential.append(name)
+
+    if by_day:
+        # 有明确天号：按天填，缺的用最近一次出现的名字向前/向后补
+        last = ""
+        result: list[str] = []
+        for day in range(1, days + 1):
+            name = by_day.get(day) or ""
+            if name:
+                last = name
+            result.append(name or last)
+        # 前面缺的用后面第一个补
+        first_known = next((n for n in result if n), "")
+        return [n or first_known for n in result]
+
+    if len(sequential) == 1:
+        return [sequential[0]] * days
+
+    if sequential:
+        # 没写天号但给了多个：按顺序一天一个，不够就沿用最后一个
+        result = []
+        for day in range(1, days + 1):
+            if day <= len(sequential):
+                result.append(sequential[day - 1])
+            else:
+                result.append(sequential[-1])
+        return result
+
+    return []
 
 
 def _pick_origin(
@@ -652,15 +727,33 @@ def generate(prefs: Preferences) -> dict:
 
     # ③ 住宿：用户给了酒店/区域就把它当地理锚点，第二天从酒店出发，
     #    晚上回酒店，酒店通勤按真实路径算。没给就还是过夜占位，不编时间。
-    lodging_poi: Poi | None = None
-    if prefs.lodging.strip() and int(prefs.days or 1) > 1:
-        lodging_poi = find_by_name(prefs.city, prefs.lodging.strip())
-        if lodging_poi is None:
+    #
+    # 支持按天换酒店：只写一家 → 天天住它；写"第1天A，第2天B" →
+    # 第 1 晚 A、第 2 晚 B，第二天早上从 A 出发、晚上到 B。
+    days_total = int(prefs.days or 1)
+    lodging_names: list[str] = list(prefs.lodgings or [])
+    if not lodging_names and prefs.lodging.strip():
+        lodging_names = parse_lodging(prefs.lodging, days_total)
+
+    # 每晚住哪（索引 0 = 第 1 晚）；None 表示待定
+    lodging_pois: list[Poi | None] = []
+    for night in range(days_total):
+        name = lodging_names[night] if night < len(lodging_names) else ""
+        name = (name or "").strip()
+        if not name:
+            lodging_pois.append(None)
+            continue
+        poi = find_by_name(prefs.city, name)
+        if poi is None:
             warnings.append(
-                f"住宿「{prefs.lodging.strip()}」没搜到，已按待定处理；"
+                f"住宿「{name}」没搜到，已按待定处理；"
                 "可以换成具体酒店名或附近的地标"
             )
-    if int(prefs.days or 1) > 1 and lodging_poi is None and not prefs.lodging.strip():
+        lodging_pois.append(poi)
+
+    # 兼容旧代码里"只有一个 lodging_poi"的写法：用第 1 晚的那个
+    lodging_poi: Poi | None = lodging_pois[0] if lodging_pois else None
+    if days_total > 1 and not any(lodging_pois) and not prefs.lodging.strip():
         warnings.append(
             "住宿未指定：只放了过夜占位，入住时间和酒店通勤未计入行程；"
             "在新建行程里填「住哪儿」可以按酒店排"
@@ -708,8 +801,9 @@ def generate(prefs: Preferences) -> dict:
             }
         )
 
-        # 第 2 天起从昨晚的酒店出发；没填酒店就沿用上一站
-        day_origin = current if day == 1 else (lodging_poi or current)
+        # 第 2 天起从"昨晚住的那家"出发；没填酒店就沿用上一站
+        last_night = lodging_pois[day - 2] if day >= 2 and day - 2 < len(lodging_pois) else None
+        day_origin = current if day == 1 else (last_night or current)
 
         picks: list[tuple[Poi, int, int, int]] = []
         if day == 1 and must_pois:
@@ -795,9 +889,9 @@ def generate(prefs: Preferences) -> dict:
             meet_label = meet_title
             meet_place = origin.name
             meet_note = "生成器设定的集合点"
-        elif lodging_poi is not None:
-            meet_label = f"{lodging_poi.name}出发（第 {day} 天）"
-            meet_place = lodging_poi.name
+        elif last_night is not None:
+            meet_label = f"{last_night.name}出发（第 {day} 天）"
+            meet_place = last_night.name
             meet_note = "从昨晚的住宿出发"
         else:
             meet_label = f"{prefs.city}出发（第 {day} 天）"
@@ -860,12 +954,14 @@ def generate(prefs: Preferences) -> dict:
         if day < days:
             last_leave = day_stops[-1][2]
             hotel_id = f"d{day}_hotel"
+            # 这一晚住哪儿（注意：按天住宿时第 N 晚可能和前后都不同）
+            tonight = lodging_pois[day - 1] if day - 1 < len(lodging_pois) else None
 
-            if lodging_poi is not None:
+            if tonight is not None:
                 # 住哪儿是确定的：到店时间 = 最后一站离开 + 真实路径时长
                 hotel_route = choose_route(
                     prev_poi,
-                    lodging_poi,
+                    tonight,
                     prefs.city,
                     avoid_walking=prefs.avoid_walking,
                 )
@@ -879,15 +975,19 @@ def generate(prefs: Preferences) -> dict:
                         "（已过午夜），请确认是否调整最后一站或换近一点的住处"
                     )
                 hotel_end = max(hotel_start + 1, 23 * 60 + 59)
-                hotel_title = f"{lodging_poi.name} · 住宿（第 {day} 晚）"
-                hotel_place = lodging_poi.name
-                hotel_note = "用户指定的住宿，已作为第二天的出发点"
-                hotel_confidence = lodging_poi.data_quality()
+                hotel_title = f"{tonight.name} · 住宿（第 {day} 晚）"
+                hotel_place = tonight.name
+                # 逐晚换店时要说清楚：第二天从这家出发
+                if day < days and any(p is not None and p.name != tonight.name for p in lodging_pois[day:]):
+                    hotel_note = "第 " + str(day) + " 晚住这里，第 " + str(day + 1) + " 天从这家出发"
+                else:
+                    hotel_note = "用户指定的住宿，已作为第二天的出发点"
+                hotel_confidence = tonight.data_quality()
                 hotel_poi_info = {
-                    "name": lodging_poi.name,
-                    "address": lodging_poi.address,
-                    "rating": lodging_poi.rating or None,
-                    "cost": lodging_poi.cost or None,
+                    "name": tonight.name,
+                    "address": tonight.address,
+                    "rating": tonight.rating or None,
+                    "cost": tonight.cost or None,
                 }
             else:
                 # 没指定住宿：只放一个过夜占位，绝不编入住时长和酒店通勤
@@ -935,7 +1035,7 @@ def generate(prefs: Preferences) -> dict:
                     "transport": hotel_route,
                 }
             )
-            current = lodging_poi or prev_poi
+            current = tonight or prev_poi
 
     stop_count = sum(
         1 for node in nodes
@@ -993,12 +1093,21 @@ def generate(prefs: Preferences) -> dict:
             "avoidWalking": prefs.avoid_walking,
             "lodging": (
                 {
-                    "requested": prefs.lodging,
-                    "resolved": lodging_poi is not None,
+                    "requested": ", ".join(lodging_names) if lodging_names else prefs.lodging,
+                    "resolved": any(p is not None for p in lodging_pois),
                     "name": lodging_poi.name if lodging_poi is not None else "",
                     "place": lodging_poi.address if lodging_poi is not None else "",
+                    # 逐晚清单：界面按这个显示"第 1 晚 A / 第 2 晚 B"
+                    "byDay": [
+                        {
+                            "night": index + 1,
+                            "name": poi.name if poi is not None else "",
+                            "resolved": poi is not None,
+                        }
+                        for index, poi in enumerate(lodging_pois)
+                    ],
                 }
-                if prefs.lodging.strip()
+                if (prefs.lodging.strip() or lodging_names)
                 else None
             ),
             # 给界面用的一句话：让用户看到"AI 到底理解成什么"
@@ -1011,7 +1120,19 @@ def generate(prefs: Preferences) -> dict:
                     ("想" + "、".join(prefs.interests)) if prefs.interests else "",
                     ("避开" + "、".join(prefs.avoid)) if prefs.avoid else "",
                     (f"人均 {prefs.budget_per_person} 以内" if prefs.budget_per_person else ""),
-                    (f"住{lodging_poi.name}" if lodging_poi is not None else ""),
+                    (
+                        # 只住一家：显示店名（没解析出来就显示用户写的那串）；
+                        # 换店：按晚列出，让用户确认系统没理解错
+                        "住" + lodging_poi.name
+                        if (lodging_poi is not None and _unique_lodging_names(lodging_names) == 1)
+                        else (
+                            "住宿 " + " / ".join(
+                                f"第{i + 1}晚 {n}" for i, n in enumerate(lodging_names) if n
+                            )
+                            if _unique_lodging_names(lodging_names) > 1
+                            else ("住" + next((n for n in lodging_names if n), ""))
+                        )
+                    ),
                     ("少走路" if prefs.avoid_walking else ""),
                 )
                 if part
