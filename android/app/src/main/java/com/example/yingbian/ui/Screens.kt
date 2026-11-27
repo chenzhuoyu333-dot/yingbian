@@ -526,8 +526,9 @@ fun NewPlanScreen(
                         // 只选一天：明确标成单日，避免用户以为能生成多日
                         "$startDate · 单日"
                     } else {
+                        // daysBetween 本身就是含头含尾（27→28 返回 2），不能再 +1
                         "$startDate → $endDate · 共 " +
-                            (daysBetween(startDate, endDate) + 1) + " 天"
+                            daysBetween(startDate, endDate) + " 天"
                     },
                     fontSize = 14.sp,
                     color = if (startDate.isBlank()) Muted else Ink,
