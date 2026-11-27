@@ -106,6 +106,7 @@ fun PlanScreen(
     onEditLodging: () -> Unit = {},
     onAdjustStay: (PlanNode) -> Unit = {},
     onAddNode: () -> Unit = {},
+    onRefine: () -> Unit = {},
     onDeleteNode: (PlanNode) -> Unit = {},
 ) {
 
@@ -235,10 +236,16 @@ fun PlanScreen(
             }
             item {
                 Spacer(Modifier.height(10.dp))
-                OutlinedButton(
-                    onClick = onAddNode,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("＋ 加一站", fontSize = 13.sp) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = onAddNode,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("＋ 加一站", fontSize = 13.sp) }
+                    OutlinedButton(
+                        onClick = onRefine,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("提意见", fontSize = 13.sp) }
+                }
             }
             item { Spacer(Modifier.height(8.dp)) }
         }

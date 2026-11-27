@@ -12,6 +12,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
@@ -108,6 +110,8 @@ fun YingBianRoot() {
     // 我的自动寻找服务器状态
     var findingServer by remember { mutableStateOf(false) }
     var addNodeOpen by remember { mutableStateOf(false) }
+    var refineOpen by remember { mutableStateOf(false) }
+    var refineText by remember { mutableStateOf("") }
     var addNodeText by remember { mutableStateOf("") }
     var findHint by remember { mutableStateOf("") }
 
@@ -476,6 +480,18 @@ fun YingBianRoot() {
                                     if (node.stayBasis.isNotBlank()) stayNode = node
                                     else Toast.makeText(context, "这一站没有可调停留信息", Toast.LENGTH_SHORT).show()
                                 },
+                                onAddNode = {
+                                    addNodeText = ""
+                                    addNodeOpen = true
+                                },
+                                onDeleteNode = { node ->
+                                    stayNode = null
+                                    scope.launch { controller.removeNodeAt(node.id) }
+                                },
+                                onRefine = {
+                                    refineText = ""
+                                    refineOpen = true
+                                },
                             )
 
                             AppScreen.Scheme -> SchemeScreen(
@@ -698,6 +714,57 @@ fun YingBianRoot() {
                 onDismiss = { patrolOpen = false },
             )
         }
+    }
+
+    if (refineOpen) {
+        AlertDialog(
+            onDismissRequest = { refineOpen = false },
+            title = { Text("提意见") },
+            text = {
+                Column {
+                    Text("说得越具体，改得越准。", fontSize = 12.sp, color = Muted)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = refineText,
+                        onValueChange = { refineText = it },
+                        placeholder = {
+                            Text("比如「加上南阳府衙」「不想去咖啡馆」", fontSize = 12.sp)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf("加上博物馆", "不想去咖啡馆", "删掉晚饭").forEach { sample ->
+                            TextButton(onClick = { refineText = sample }) {
+                                Text(sample, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val text = refineText.trim()
+                        if (text.isNotBlank()) {
+                            refineOpen = false
+                            scope.launch {
+                                controller.refinePlan(text)
+                                val note = controller.generateNote ?: controller.error
+                                if (!note.isNullOrBlank()) {
+                                    Toast.makeText(context, note, Toast.LENGTH_LONG).show()
+                                }
+                                controller.clearGenerateNote()
+                            }
+                        }
+                    },
+                ) { Text("改改看") }
+            },
+            dismissButton = {
+                TextButton(onClick = { refineOpen = false }) { Text("取消") }
+            },
+        )
     }
 
     if (addNodeOpen) {
