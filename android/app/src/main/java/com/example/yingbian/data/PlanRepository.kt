@@ -24,6 +24,9 @@ interface PlanRepository {
         stayMin: Int = 60,
     ): EditResult
 
+    /** 按一句意见改当前方案（加必去 / 删不想要的） */
+    suspend fun refine(text: String, city: String): RefineResult
+
     /** 删掉一站（前后重连并重算通勤） */
     suspend fun removeNode(nodeId: String): EditResult
 
@@ -157,6 +160,9 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
 
     override suspend fun removeNode(nodeId: String): EditResult =
         throw IOException("离线模式无法增删站点，请连上后端")
+
+    override suspend fun refine(text: String, city: String): RefineResult =
+        throw IOException("离线模式无法按意见修改，请连上后端")
 
 
     override suspend fun sendDelay(nodeId: String, minutes: Int): Impact {
@@ -596,6 +602,16 @@ class RemotePlanRepository(
         val data = request("POST", "/api/plan/$planId/nodes", body)
         acceptEditedPlan(data)
         return PlanJson.parseEdit(data)
+    }
+
+    override suspend fun refine(text: String, city: String): RefineResult {
+        val body = JSONObject()
+            .put("text", text)
+            .put("city", city)
+            .put("memberId", settings.memberId)
+        val data = request("POST", "/api/plan/$planId/refine", body)
+        acceptEditedPlan(data)
+        return PlanJson.parseRefine(data)
     }
 
     override suspend fun removeNode(nodeId: String): EditResult {

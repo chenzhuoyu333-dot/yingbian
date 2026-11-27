@@ -12,6 +12,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
@@ -108,6 +110,8 @@ fun YingBianRoot() {
     // 我的自动寻找服务器状态
     var findingServer by remember { mutableStateOf(false) }
     var addNodeOpen by remember { mutableStateOf(false) }
+    var refineOpen by remember { mutableStateOf(false) }
+    var refineText by remember { mutableStateOf("") }
     var addNodeText by remember { mutableStateOf("") }
     var findHint by remember { mutableStateOf("") }
 
@@ -225,6 +229,15 @@ fun YingBianRoot() {
         }
     }
 
+    // 空态也要天气：进到"今天没安排"时按定位取一次，取不到才显示"取不到天气"
+    LaunchedEffect(controller.todayEmpty) {
+        if (controller.todayEmpty && controller.weather == null) {
+            withContext(Dispatchers.IO) { locationHelper.lastKnown() }?.let { point ->
+                controller.refreshWeather(point.first, point.second)
+            }
+        }
+    }
+
     LaunchedEffect(repoVersion) {
         controller.loadHome()
         controller.loadToday()
@@ -277,7 +290,7 @@ fun YingBianRoot() {
                                 AppScreen.Home -> "我的计划"
                                 AppScreen.NewPlan -> "新建行程"
                                 AppScreen.Plan -> controller.plan?.let { planDisplayTitle(it) } ?: "应变"
-                                AppScreen.Scheme -> "两套方案对比"
+                                AppScreen.Scheme -> "应变方案"
                                 AppScreen.Notify -> "提醒"
                                 AppScreen.Todo -> "待办清单"
                                 AppScreen.Profile -> "我的"
@@ -328,15 +341,8 @@ fun YingBianRoot() {
             }
             Box(modifier = Modifier.weight(1f)) {
                 when {
-                    controller.todayEmpty -> NoPlanTodayScreen(
-                        weather = controller.weather,
-                        weatherLoading = controller.weatherLoading,
-                        weatherError = controller.weatherError,
-                        today = todayIso(),
-                        onNewPlan = { scope.launch { openNewPlanPage() } },
-                        onRefreshWeather = { scope.launch { refreshWeatherFromLocation() } },
-                    )
-
+                    // 注意："今天没行程"必须在 AppScreen.Plan 分支里判断。
+                    // 放在这里会拦掉所有 tab —— 现场表现就是"点哪个都没反应"。
                     controller.empty -> EmptyScreen(onLoad = { scope.launch { controller.load() } })
                     controller.error != null -> ErrorScreen(
                         message = controller.error ?: "",
@@ -406,7 +412,18 @@ fun YingBianRoot() {
                             // 新建页已在外层提前处理，这里只是保证 when 完整。
                             AppScreen.NewPlan -> LoadingScreen()
 
-                            AppScreen.Plan -> PlanScreen(
+                            AppScreen.Plan -> if (controller.todayEmpty) {
+                                NoPlanTodayScreen(
+                                    weather = controller.weather,
+                                    weatherLoading = controller.weatherLoading,
+                                    weatherError = controller.weatherError,
+                                    today = todayIso(),
+                                    onNewPlan = { scope.launch { openNewPlanPage() } },
+                                    onRefreshWeather = {
+                                        scope.launch { refreshWeatherFromLocation() }
+                                    },
+                                )
+                            } else PlanScreen(
                                 plan = plan,
                                 impact = controller.impact,
                                 weather = controller.weather,
@@ -441,6 +458,18 @@ fun YingBianRoot() {
                                 onAdjustStay = { node ->
                                     if (node.stayBasis.isNotBlank()) stayNode = node
                                     else Toast.makeText(context, "这一站没有可调停留信息", Toast.LENGTH_SHORT).show()
+                                },
+                                onAddNode = {
+                                    addNodeText = ""
+                                    addNodeOpen = true
+                                },
+                                onDeleteNode = { node ->
+                                    stayNode = null
+                                    scope.launch { controller.removeNodeAt(node.id) }
+                                },
+                                onRefine = {
+                                    refineText = ""
+                                    refineOpen = true
                                 },
                             )
 
@@ -664,6 +693,57 @@ fun YingBianRoot() {
                 onDismiss = { patrolOpen = false },
             )
         }
+    }
+
+    if (refineOpen) {
+        AlertDialog(
+            onDismissRequest = { refineOpen = false },
+            title = { Text("提意见") },
+            text = {
+                Column {
+                    Text("说得越具体，改得越准。", fontSize = 12.sp, color = Muted)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = refineText,
+                        onValueChange = { refineText = it },
+                        placeholder = {
+                            Text("比如「加上南阳府衙」「不想去咖啡馆」", fontSize = 12.sp)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf("加上博物馆", "不想去咖啡馆", "删掉晚饭").forEach { sample ->
+                            TextButton(onClick = { refineText = sample }) {
+                                Text(sample, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val text = refineText.trim()
+                        if (text.isNotBlank()) {
+                            refineOpen = false
+                            scope.launch {
+                                controller.refinePlan(text)
+                                val note = controller.generateNote ?: controller.error
+                                if (!note.isNullOrBlank()) {
+                                    Toast.makeText(context, note, Toast.LENGTH_LONG).show()
+                                }
+                                controller.clearGenerateNote()
+                            }
+                        }
+                    },
+                ) { Text("改改看") }
+            },
+            dismissButton = {
+                TextButton(onClick = { refineOpen = false }) { Text("取消") }
+            },
+        )
     }
 
     if (addNodeOpen) {

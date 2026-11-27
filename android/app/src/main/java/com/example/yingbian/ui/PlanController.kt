@@ -202,6 +202,7 @@ class PlanController(
                 val fresh = repo.loadPlan()
                 if (fresh.version != plan?.version) {
                     plan = fresh
+                    todayEmpty = false
                     remoteChanged = true
                 }
             }
@@ -341,6 +342,7 @@ class PlanController(
         try {
             val updated = repo.applyScheme(scheme)
             plan = updated
+            todayEmpty = false
             record("采用了方案「${scheme.label}」")
             planBeforeApply = base
             lastScheme = scheme
@@ -503,6 +505,7 @@ class PlanController(
         error = null
         try {
             plan = repo.openPlan(planId)
+            todayEmpty = false
             localTimeline = emptyList()
             record("打开了行程「${plan?.title.orEmpty()}」")
             impact = null
@@ -597,6 +600,7 @@ class PlanController(
             val cached = repo.cachedPlan()
             if (cached != null) {
                 plan = cached
+                todayEmpty = false
                 offline = true
             } else {
                 error = exception.message ?: "载入失败"
@@ -629,12 +633,14 @@ class PlanController(
                 weatherLocation = "行程所在地"
             } else {
                 plan = repo.openPlan(target.planId)
+                todayEmpty = false
                 refreshPlanWeather()
             }
         } catch (exception: Exception) {
             val cached = repo.cachedPlan()
             if (cached != null) {
                 plan = cached
+                todayEmpty = false
                 offline = true
                 weather = null
             } else {
@@ -660,6 +666,7 @@ class PlanController(
                 stayMin = stayMin,
             )
             plan = result.plan
+            todayEmpty = false
             record("加了一站「" + title + "」")
             result.warnings.firstOrNull()?.let { generateNote = it }
             // 增删站点不是一次"方案"，通知/待办重新等变化后再生成
@@ -668,6 +675,32 @@ class PlanController(
             todoDone = emptySet()
         } catch (exception: Exception) {
             error = exception.message ?: "加站失败"
+        } finally {
+            loading = false
+        }
+    }
+
+    /** 提一句意见，直接改在当前方案上 */
+    suspend fun refinePlan(text: String) {
+        if (text.isBlank()) return
+        loading = true
+        error = null
+        try {
+            val base = plan ?: return
+            val result = repo.refine(text, cityOf(base))
+            plan = result.plan
+            todayEmpty = false
+            if (result.applied.isNotEmpty()) {
+                record("按意见调整：" + result.applied.joinToString("、"))
+                generateNote = result.applied.joinToString("、")
+            } else {
+                generateNote = result.unsupported.ifBlank { "这句没能改到方案上" }
+            }
+            notifications = emptyList()
+            todos = emptyList()
+            todoDone = emptySet()
+        } catch (exception: Exception) {
+            error = exception.message ?: "按意见修改失败"
         } finally {
             loading = false
         }
@@ -682,6 +715,7 @@ class PlanController(
         try {
             val result = repo.removeNode(nodeId)
             plan = result.plan
+            todayEmpty = false
             record("删掉了「" + title + "」")
             notifications = emptyList()
             todos = emptyList()
@@ -743,6 +777,7 @@ class PlanController(
         clearCheckin()
         try {
             plan = repo.generate(prefs)
+            todayEmpty = false
             impact = null
             schemes = emptyList()
             selectedSchemeId = null
@@ -804,6 +839,7 @@ class PlanController(
         try {
             val updated = repo.applyScheme(scheme)
             plan = updated
+            todayEmpty = false
             record("采用了方案「${scheme.label}」")
             planBeforeApply = base
             lastScheme = scheme
@@ -872,6 +908,7 @@ class PlanController(
         try {
             val updated = repo.applyScheme(scheme)
             plan = updated
+            todayEmpty = false
             record("采用了方案「${scheme.label}」")
             planBeforeApply = base
             lastScheme = scheme
@@ -917,6 +954,7 @@ class PlanController(
         error = null
         try {
             plan = repo.updateLodging(lodging)
+            todayEmpty = false
             record("住宿改为「$lodging」")
             generateNote = "住宿已改为 $lodging"
         } catch (exception: Exception) {
@@ -932,6 +970,7 @@ class PlanController(
         try {
             val title = plan?.node(nodeId)?.title ?: nodeId
             plan = repo.updateStay(nodeId, minutes)
+            todayEmpty = false
             record("把「$title」的停留改为 $minutes 分钟")
             generateNote = "停留已改为 $minutes 分钟，后面的站点已顺延"
         } catch (exception: Exception) {
@@ -949,6 +988,7 @@ class PlanController(
         clearCheckin()
         try {
             plan = repo.undo()
+            todayEmpty = false
             record("撤销回到 v${plan?.version ?: 1}")
             impact = null
             schemes = emptyList()
@@ -975,6 +1015,7 @@ class PlanController(
         if (node != null) {
             try {
                 plan = repo.setLocked(node, false)
+                todayEmpty = false
             } catch (exception: Exception) {
                 error = exception.message ?: "解锁失败"
                 return
@@ -994,6 +1035,7 @@ class PlanController(
         eventTitle = "降雨 15:00–17:00"
         try {
             plan = repo.setLocked("n_sunset", true)
+            todayEmpty = false
             impact = repo.sendEvent(scenario)
             loadSchemes()
         } catch (exception: Exception) {
@@ -1010,6 +1052,7 @@ class PlanController(
         eventTitle = "午餐 · 河边餐厅取消"
         try {
             plan = repo.setLocked("n_sunset", false)
+            todayEmpty = false
             impact = repo.sendEvent(scenario)
             loading = false
             loadSchemes()
@@ -1085,6 +1128,7 @@ class PlanController(
             return
         }
         plan = cached
+        todayEmpty = false
         offline = true
         error = null
         empty = false
@@ -1108,6 +1152,7 @@ class PlanController(
         clearCheckin()
         try {
             plan = repo.reset()
+            todayEmpty = false
             impact = null
             schemes = emptyList()
             selectedSchemeId = null

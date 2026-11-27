@@ -815,6 +815,91 @@ def post_repair(plan_id: str, body: dict = Body(...)):
     })
 
 
+@app.post("/api/plan/{plan_id}/refine")
+def post_refine(plan_id: str, body: dict = Body(...)):
+    """按用户的一句意见改当前方案。
+
+    请求：{text: "想把博物馆去掉，加上南阳府衙", city?: "南阳市", memberId?}
+    返回：{plan, applied: [...], unsupported: "...", warnings: [...]}
+    """
+    plan = _plan_or_404(plan_id)
+    if plan is None:
+        return _error("NOT_FOUND", "计划不存在", 404)
+
+    text = str(body.get("text") or "").strip()
+    if not text:
+        return _error("EMPTY_TEXT", "先说要改什么，例如「想加个博物馆」「不想去咖啡馆」")
+
+    city = str(body.get("city") or "").strip()
+    if not city:
+        city = str((plan.title or "").split(" ")[-1] or "").strip()
+
+    parse_source = "rule"
+    try:
+        prefs, parse_source = ai_parse_preferences(text)
+    except Exception as exc:
+        return _error("REFINE_PARSE_FAILED", str(exc))
+
+    must_visit = [w for w in (prefs.get("mustVisit") or []) if str(w).strip()]
+    avoid = [w for w in (prefs.get("avoid") or []) if str(w).strip()]
+
+    # 否定词守卫："不想去咖啡馆"常被模型解析成必去，这里用确定性规则纠正。
+    # 宁可多删一项，也不要因为一句否定反而多塞一个点。
+    negation = any(w in text for w in ("不想", "不要", "别", "去掉", "删掉", "换个", "不去"))
+    if negation:
+        moved = [w for w in must_visit if w]
+        avoid = list(dict.fromkeys(avoid + moved))
+        must_visit = []
+
+    applied: list[str] = []
+    warnings: list[str] = []
+    working = plan
+
+    # 1) 不想要的：按标题关键词删掉
+    for word in avoid[:4]:
+        stems = [word, word.rstrip("馆店厅室")]
+        for node in list(working.nodes):
+            if node.dropped or node.overnight:
+                continue
+            if any(stem and stem in (node.title or "") for stem in stems):
+                try:
+                    result = plan_remove_node(working, node.id)
+                    working = result["plan"]
+                    applied.append(f"删掉「{node.title}」")
+                except Exception as exc:
+                    warnings.append(str(exc))
+
+    # 2) 想加的：按名字检索后插入（最多 2 个，避免一句话塞爆一天）
+    for name in must_visit[:2]:
+        try:
+            result = plan_add_node(working, name, city, after_node_id=None, stay_min=60)
+            working = result["plan"]
+            applied.append(f"加上「{name}」")
+            warnings.extend(result.get("warnings") or [])
+        except Exception as exc:
+            warnings.append(f"「{name}」没加上：{exc}")
+
+    unsupported = ""
+    if not applied:
+        unsupported = (
+            "这句我还没法可靠地改到方案上。可以试试更具体的说法，"
+            "比如「加上南阳府衙」「不想去咖啡馆」"
+        )
+
+    if applied:
+        _commit_plan(plan_id, working, body, "按意见调整：" + "、".join(applied[:3]))
+
+    return _ok(
+        {
+            "plan": PLANS[plan_id].to_dict() if applied else plan.to_dict(),
+            "applied": applied,
+            "unsupported": unsupported,
+            "warnings": warnings,
+            "parseSource": parse_source,
+        }
+    )
+
+
 @app.post("/api/plan/{plan_id}/nodes")
 def post_add_node(plan_id: str, body: dict = Body(...)):
     """在某一站之后加一站。

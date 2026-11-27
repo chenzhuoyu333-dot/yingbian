@@ -213,6 +213,13 @@ data class LocateResult(
     val isBehind: Boolean get() = status == "behind"
 }
 
+/** 一次"按意见修改"的结果 */
+data class RefineResult(
+    val plan: Plan,
+    val applied: List<String>,
+    val unsupported: String,
+)
+
 /** 一次站点增删的结果：新计划 + 提示 */
 data class EditResult(
     val plan: Plan,
@@ -634,6 +641,13 @@ object PlanJson {
             schemes = schemes,
         )
     }
+
+    fun parseRefine(data: JSONObject): RefineResult =
+        RefineResult(
+            plan = parsePlan(data.getJSONObject("plan")),
+            applied = data.optJSONArray("applied")?.strings().orEmpty(),
+            unsupported = data.optString("unsupported", ""),
+        )
 
     fun parseEdit(data: JSONObject): EditResult =
         EditResult(

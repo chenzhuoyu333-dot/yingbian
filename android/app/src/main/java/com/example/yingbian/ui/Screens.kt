@@ -106,6 +106,7 @@ fun PlanScreen(
     onEditLodging: () -> Unit = {},
     onAdjustStay: (PlanNode) -> Unit = {},
     onAddNode: () -> Unit = {},
+    onRefine: () -> Unit = {},
     onDeleteNode: (PlanNode) -> Unit = {},
 ) {
 
@@ -217,10 +218,16 @@ fun PlanScreen(
             }
             item {
                 Spacer(Modifier.height(10.dp))
-                OutlinedButton(
-                    onClick = onAddNode,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("＋ 加一站", fontSize = 13.sp) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = onAddNode,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("＋ 加一站", fontSize = 13.sp) }
+                    OutlinedButton(
+                        onClick = onRefine,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("提意见", fontSize = 13.sp) }
+                }
             }
             item { Spacer(Modifier.height(8.dp)) }
         }
@@ -527,7 +534,6 @@ fun NewPlanScreen(
     var startPlace by remember { mutableStateOf("") }
     var lodging by remember { mutableStateOf("") }
     var pace by remember { mutableStateOf("normal") }
-    var maxTransitMin by remember { mutableStateOf(60) }
     var startLat by remember { mutableStateOf<Double?>(null) }
     var startLng by remember { mutableStateOf<Double?>(null) }
     var locating by remember { mutableStateOf(false) }
@@ -597,8 +603,9 @@ fun NewPlanScreen(
                         // 只选一天：明确标成单日，避免用户以为能生成多日
                         "$startDate · 单日"
                     } else {
+                        // daysBetween 本身就是含头含尾（27→28 返回 2），不能再 +1
                         "$startDate → $endDate · 共 " +
-                            (daysBetween(startDate, endDate) + 1) + " 天"
+                            daysBetween(startDate, endDate) + " 天"
                     },
                     fontSize = 14.sp,
                     color = if (startDate.isBlank()) Muted else Ink,
@@ -622,38 +629,17 @@ fun NewPlanScreen(
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        locating = true
-                        // onLocate 是 suspend：必须在协程里调
-                        val point = try {
-                            onLocate()
-                        } finally {
-                            locating = false
-                        }
-                        if (point != null) {
-                            startLat = point.first
-                            startLng = point.second
-                            startPlace = "我的位置"
-                        }
-                    }
-                },
-                enabled = !locating,
-            ) {
-                Text(if (locating) "定位中…" else "用当前定位", fontSize = 12.sp)
-            }
-            Spacer(Modifier.width(10.dp))
-            if (startLat != null) {
-                Text("已用当前定位", fontSize = 11.sp, color = OkGreen)
-            } else if (startPlace.isNotBlank()) {
-                Text("从「" + startPlace + "」出发", fontSize = 11.sp, color = Muted)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = if (startPlace.isNotBlank()) {
+                "从「" + startPlace + "」出发"
             } else {
-                Text("不填就从市区默认位置开始", fontSize = 11.sp, color = Muted)
-            }
-        }
+                "不填就从市区默认位置开始"
+            },
+            fontSize = 11.sp,
+            color = Muted,
+            modifier = Modifier.padding(start = 2.dp),
+        )
 
         Spacer(Modifier.height(22.dp))
         Text("住在哪里？", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
@@ -688,25 +674,6 @@ fun NewPlanScreen(
         Text("轻松会缩短每天的点数、建议 18:30 结束；紧凑会多排并建议 21:00 结束。", fontSize = 10.sp, color = Muted)
 
         Spacer(Modifier.height(22.dp))
-        Text("单段路最多坐多久？", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(
-                45 to "45 分钟",
-                60 to "60 分钟",
-                90 to "90 分钟",
-            ).forEach { (value, label) ->
-                val selected = maxTransitMin == value
-                if (selected) {
-                    Button(onClick = { maxTransitMin = value }) { Text(label, fontSize = 12.sp) }
-                } else {
-                    OutlinedButton(onClick = { maxTransitMin = value }) { Text(label, fontSize = 12.sp) }
-                }
-            }
-        }
-        Text("默认 60 分钟；90 只建议当天只去一个远点、或必去点在郊区时用。", fontSize = 10.sp, color = Muted)
-
-        Spacer(Modifier.height(22.dp))
         Text("说说你想怎么玩", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(
@@ -730,7 +697,10 @@ fun NewPlanScreen(
 
         Spacer(Modifier.height(24.dp))
         Button(
-            onClick = { onCreate(city, startDate, endDate.ifBlank { startDate }, text, startPlace, startLat, startLng, lodging, pace, maxTransitMin) },
+            onClick = { onCreate(
+                city, startDate, endDate.ifBlank { startDate }, text,
+                startPlace, startLat, startLng, lodging, pace, 60,
+            ) },
             enabled = !busy && city.isNotBlank() && startDate.isNotBlank(),
             modifier = Modifier.fillMaxWidth().height(48.dp),
         ) {
@@ -1284,7 +1254,7 @@ fun SchemeScreen(
     onApply: () -> Unit,
 ) {
     if (schemes.isEmpty()) {
-        EmptyHint("还没有方案，先在行程页模拟一次下雨")
+        EmptyHint("还没有方案。行程出现真实变化时，这里会给出改法")
         return
     }
     Column(modifier = Modifier.fillMaxSize()) {
