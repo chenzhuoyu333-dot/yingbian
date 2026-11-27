@@ -488,10 +488,10 @@ fun YingBianRoot() {
                         onLocate = {
                             withContext(Dispatchers.IO) { locationHelper.lastKnown() }
                         },
-                        onCreate = { city, start, end, text, place, lat, lng, pace, maxTransit ->
+                        onCreate = { city, start, end, text, place, lat, lng, lodging, pace, maxTransit ->
                             scope.launch {
                                 controller.createTrip(
-                                    city, start, end, text, place, lat, lng, "", pace, maxTransit,
+                                    city, start, end, text, place, lat, lng, lodging, pace, maxTransit,
                                 )
                                 val note = controller.generateNote
                                 if (!note.isNullOrBlank()) {

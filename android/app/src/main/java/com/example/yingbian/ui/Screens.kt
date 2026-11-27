@@ -608,6 +608,7 @@ fun NewPlanScreen(
         startPlace: String,
         startLat: Double?,
         startLng: Double?,
+        lodging: String,
         pace: String,
         maxTransitMin: Int,
     ) -> Unit,
@@ -618,6 +619,8 @@ fun NewPlanScreen(
     var endDate by remember { mutableStateOf("") }
     var text by remember { mutableStateOf("") }
     var startPlace by remember { mutableStateOf("") }
+    // 住宿：住一家写一个店名；换酒店按天写（第1天 A，第2天 B），后端解析成逐晚
+    var lodging by remember { mutableStateOf("") }
     var pace by remember { mutableStateOf("normal") }
     var startLat by remember { mutableStateOf<Double?>(null) }
     var startLng by remember { mutableStateOf<Double?>(null) }
@@ -727,6 +730,28 @@ fun NewPlanScreen(
         )
 
         Spacer(Modifier.height(22.dp))
+        Text("住在哪里？", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = lodging,
+            onValueChange = { lodging = it },
+            placeholder = {
+                Text(
+                    "住一家就写一个店名；换酒店就按天写：\n第1天 西湖国宾馆，第2天 杭州东站",
+                    fontSize = 12.sp,
+                )
+            },
+            minLines = 2,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "每天从当晚的酒店出发、晚上回酒店，酒店通勤按地图算。",
+            fontSize = 10.sp,
+            color = Muted,
+        )
+
+        Spacer(Modifier.height(22.dp))
         Text("节奏", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -771,7 +796,7 @@ fun NewPlanScreen(
         Button(
             onClick = { onCreate(
                 city, startDate, endDate.ifBlank { startDate }, text,
-                startPlace, startLat, startLng, pace, 60,
+                startPlace, startLat, startLng, lodging, pace, 60,
             ) },
             enabled = !busy && city.isNotBlank() && startDate.isNotBlank(),
             modifier = Modifier.fillMaxWidth().height(48.dp),
