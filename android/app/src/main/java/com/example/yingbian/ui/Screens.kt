@@ -456,7 +456,6 @@ fun NewPlanScreen(
     var startPlace by remember { mutableStateOf("") }
     var lodging by remember { mutableStateOf("") }
     var pace by remember { mutableStateOf("normal") }
-    var maxTransitMin by remember { mutableStateOf(60) }
     var startLat by remember { mutableStateOf<Double?>(null) }
     var startLng by remember { mutableStateOf<Double?>(null) }
     var locating by remember { mutableStateOf(false) }
@@ -597,25 +596,6 @@ fun NewPlanScreen(
         Text("轻松会缩短每天的点数、建议 18:30 结束；紧凑会多排并建议 21:00 结束。", fontSize = 10.sp, color = Muted)
 
         Spacer(Modifier.height(22.dp))
-        Text("单段路最多坐多久？", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(
-                45 to "45 分钟",
-                60 to "60 分钟",
-                90 to "90 分钟",
-            ).forEach { (value, label) ->
-                val selected = maxTransitMin == value
-                if (selected) {
-                    Button(onClick = { maxTransitMin = value }) { Text(label, fontSize = 12.sp) }
-                } else {
-                    OutlinedButton(onClick = { maxTransitMin = value }) { Text(label, fontSize = 12.sp) }
-                }
-            }
-        }
-        Text("默认 60 分钟；90 只建议当天只去一个远点、或必去点在郊区时用。", fontSize = 10.sp, color = Muted)
-
-        Spacer(Modifier.height(22.dp))
         Text("说说你想怎么玩", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
         Spacer(Modifier.height(10.dp))
         OutlinedTextField(
@@ -639,7 +619,10 @@ fun NewPlanScreen(
 
         Spacer(Modifier.height(24.dp))
         Button(
-            onClick = { onCreate(city, startDate, endDate.ifBlank { startDate }, text, startPlace, startLat, startLng, lodging, pace, maxTransitMin) },
+            onClick = { onCreate(
+                city, startDate, endDate.ifBlank { startDate }, text,
+                startPlace, startLat, startLng, lodging, pace, 60,
+            ) },
             enabled = !busy && city.isNotBlank() && startDate.isNotBlank(),
             modifier = Modifier.fillMaxWidth().height(48.dp),
         ) {
