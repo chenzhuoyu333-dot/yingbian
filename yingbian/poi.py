@@ -294,9 +294,14 @@ def _to_poi(raw: dict) -> Poi | None:
     )
 
 
-def search_keyword(city: str, keyword: str, limit: int = MAX_PER_KEYWORD) -> list[Poi]:
+def search_keyword(
+    city: str,
+    keyword: str,
+    limit: int = MAX_PER_KEYWORD,
+    citylimit: bool = True,
+) -> list[Poi]:
     """按关键词在某个城市里搜地点"""
-    cache_key = f"{city}|{keyword}|{limit}"
+    cache_key = f"{city}|{keyword}|{limit}|{int(citylimit)}"
     if cache_key in _CACHE:
         return _CACHE[cache_key]
 
@@ -304,17 +309,17 @@ def search_keyword(city: str, keyword: str, limit: int = MAX_PER_KEYWORD) -> lis
     if not amap_key:
         raise RuntimeError("未配置 AMAP_KEY，无法检索地点（见 .env.example）")
 
-    query = urllib.parse.urlencode(
-        {
-            "keywords": keyword,
-            "city": city,
-            "citylimit": "true",
-            "offset": str(min(limit, 25)),
-            "page": "1",
-            "extensions": "all",
-            "key": amap_key,
-        }
-    )
+    params = {
+        "keywords": keyword,
+        "offset": str(min(limit, 25)),
+        "page": "1",
+        "extensions": "all",
+        "key": amap_key,
+    }
+    if city:
+        params["city"] = city
+        params["citylimit"] = "true" if citylimit else "false"
+    query = urllib.parse.urlencode(params)
     payload = _get_with_retry(f"https://restapi.amap.com/v3/place/text?{query}")
     if str(payload.get("status")) != "1":
         raise RuntimeError(f"高德检索失败：{payload.get('info')}（{payload.get('infocode')}）")
@@ -355,11 +360,12 @@ def search_interests(
     return collected
 
 
-def find_by_name(city: str, name: str) -> Poi | None:
-    """必去点：按名字精确检索一次"""
-    results = search_keyword(city, name, limit=5)
-    # 高德对「绿地海外滩」会把「绿地海外滩营销中心」排在小区的「绿地·海外滩」前面。
-    # 去掉间隔号/空格后完全同名的结果优先，避免把售楼处当成用户住的地方。
+def _pick_match(results: list[Poi], name: str) -> Poi | None:
+    """从结果里挑出最贴合用户输入的那个。
+
+    高德对「绿地海外滩」会把「绿地海外滩营销中心」排在小区的「绿地·海外滩」前面，
+    所以先比"去掉间隔号/空格后完全同名"，再退一步比包含关系。
+    """
     normalized = re.sub(r"[·•・\s\-_（）()]", "", name)
     for poi in results:
         if re.sub(r"[·•・\s\-_（）()]", "", poi.name) == normalized:
@@ -367,6 +373,31 @@ def find_by_name(city: str, name: str) -> Poi | None:
     for poi in results:
         if name in poi.name or poi.name in name:
             return poi
+    # 输入的是"华南理工大学大学城校区"，高德叫"华南理工大学(大学城校区)"：
+    # 互相不包含时，用字词覆盖率兜底（核心词都在就算命中）
+    core = normalized[:6]
+    if core:
+        for poi in results:
+            if core in re.sub(r"[·•・\s\-_（）()]", "", poi.name):
+                return poi
+    return None
+
+
+def find_by_name(city: str, name: str) -> Poi | None:
+    """按名字检索地点：先本地城市，再全国。
+
+    为什么要有第二级：
+      出发点和目的地经常不在一个城市（从广州出发去南阳）。
+      只在目的地城市里搜，起点必然搜不到 —— 这是"大多数时候搜不到"的根因。
+    """
+    found = _pick_match(search_keyword(city, name, limit=5), name)
+    if found is not None:
+        return found
+    if city:
+        # 全国范围再找一次（不限城市），命中就认
+        found = _pick_match(search_keyword("", name, limit=8, citylimit=False), name)
+        if found is not None:
+            return found
     return None
 
 

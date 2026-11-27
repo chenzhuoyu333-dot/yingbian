@@ -196,6 +196,17 @@ def _pick_origin(
             warnings.append(
                 f"出发点「{prefs.start_place}」没搜到，已按{prefs.city}市区默认出发点排"
             )
+        elif start is not None and center is not None:
+            # 搜到了、但在别的城市（从广州出发去南阳）：当天行程不可能从那儿开始，
+            # 否则每一站都会"太远"导致整份计划排不出来。
+            distance_km = distance_m(start, center) / 1000
+            if distance_km > 80:
+                if warnings is not None:
+                    warnings.append(
+                        f"出发点「{prefs.start_place}」离{prefs.city}约 {distance_km:.0f} 公里，"
+                        "已按市区默认出发点排；当天的行程从抵达后开始，跨城交通请单独安排"
+                    )
+                start = None
 
     if start is None:
         if center is not None:
