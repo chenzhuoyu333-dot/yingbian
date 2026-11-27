@@ -43,6 +43,7 @@ import com.example.yingbian.data.Impact
 import com.example.yingbian.data.Plan
 import com.example.yingbian.data.PlanEdge
 import com.example.yingbian.data.PlanNode
+import com.example.yingbian.data.displayTitle
 import com.example.yingbian.data.RepairAction
 import com.example.yingbian.data.RepairScheme
 import java.util.Locale
@@ -149,7 +150,7 @@ fun NodeCard(
             )
             Text(
                 text = when {
-                    hotelUnknown -> "住宿待定"
+                    hotelUnknown -> ""
                     overnight -> "到店"
                     else -> node.endWithShift(shift)
                 },
@@ -175,7 +176,7 @@ fun NodeCard(
             Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = node.title,
+                        text = node.displayTitle,
                         modifier = Modifier.weight(1f),
                         fontSize = 15.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -190,12 +191,20 @@ fun NodeCard(
                         )
                         Spacer(Modifier.width(6.dp))
                     }
+                    if (overnight) {
+                        Text(
+                            text = if (node.place.isBlank()) "填写 ›" else "修改 ›",
+                            fontSize = 11.sp,
+                            color = Muted,
+                        )
+                        Spacer(Modifier.width(6.dp))
+                    }
                     if (state != "ok") StateBadge(state)
                 }
                 Spacer(Modifier.height(3.dp))
                 Text(
                     text = if (hotelUnknown) {
-                        "具体酒店待定 · 入住时间与酒店通勤未计入"
+                        ""
                     } else if (overnight) {
                         listOf(
                             node.place,
@@ -217,7 +226,7 @@ fun NodeCard(
 fun EdgeLine(edge: PlanEdge?) {
     val transport = edge?.transport
     val detail = when {
-        transport?.source == "placeholder" -> transport.text.ifBlank { "酒店待定，通勤时间未估算" }
+        transport?.source == "placeholder" -> ""
         transport != null -> {
             val distance = when {
                 transport.distanceM <= 0 -> ""
@@ -332,7 +341,7 @@ fun ImpactRow(node: PlanNode, state: String, reason: String) {
         Spacer(Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(node.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+                Text(node.displayTitle, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Ink)
                 Spacer(Modifier.width(8.dp))
                 StateBadge(state)
             }

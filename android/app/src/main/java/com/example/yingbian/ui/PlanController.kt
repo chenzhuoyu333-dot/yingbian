@@ -949,11 +949,11 @@ class PlanController(
         undoPreview = null
     }
 
-    suspend fun updateLodging(lodging: String) {
+    suspend fun updateLodging(nodeId: String, lodging: String) {
         loading = true
         error = null
         try {
-            plan = repo.updateLodging(lodging)
+            plan = repo.updateLodging(lodging, nodeId)
             todayEmpty = false
             record("住宿改为「$lodging」")
             generateNote = "住宿已改为 $lodging"

@@ -38,6 +38,33 @@ def fake_http(url: str) -> dict:
     return POI_PAYLOAD
 
 
+MANY_POIS = [
+    ("M1", "湖边公园", "风景名胜;公园", "120.155,30.250"),
+    ("M2", "清河坊历史文化特色街区", "风景名胜;风景名胜", "120.169,30.239"),
+    ("M3", "城市博物馆", "科教文化服务;博物馆", "120.160,30.245"),
+    ("M4", "老街", "风景名胜;风景名胜", "120.165,30.240"),
+    ("M5", "江畔茶馆", "餐饮服务;茶艺馆", "120.168,30.243"),
+    ("M6", "近代史博物馆", "科教文化服务;博物馆", "120.152,30.248"),
+    ("M7", "梅园", "风景名胜;公园", "120.147,30.252"),
+    ("M8", "古城墙", "风景名胜;风景名胜", "120.163,30.238"),
+    ("M9", "艺术馆", "科教文化服务;美术馆", "120.149,30.244"),
+    ("M10", "运河步道", "风景名胜;风景名胜", "120.145,30.249"),
+]
+
+
+def fake_many(url: str) -> dict:
+    return {
+        "status": "1",
+        "info": "OK",
+        "infocode": "10000",
+        "count": str(len(MANY_POIS)),
+        "pois": [
+            {"id": pid, "name": name, "type": kind, "location": location}
+            for pid, name, kind, location in MANY_POIS
+        ],
+    }
+
+
 class GenerateApiTest(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(app)
@@ -135,6 +162,35 @@ class GenerateApiTest(unittest.TestCase):
             self.assertIn("湖边公园", hotel["title"])
             self.assertTrue(res["data"]["generation"]["avoidWalking"])
             self.assertTrue(res["data"]["generation"]["lodging"]["resolved"])
+        finally:
+            self.client.delete(f"/api/plans/{pid}")
+
+    def test_lodging_can_be_filled_per_night(self):
+        with patch("yingbian.poi._http_json", side_effect=fake_many):
+            from yingbian import poi
+
+            poi._CACHE.clear()
+            res = self.client.post(
+                "/api/generate",
+                json={"city": "杭州", "days": 3, "startDate": "2026-11-20"},
+            ).json()
+        self.assertTrue(res["ok"], res)
+        plan = res["data"]["plan"]
+        pid = plan["planId"]
+        try:
+            # 只填第 2 晚，第 1/3 晚必须保持未填，不能像旧接口那样一次改全部。
+            with patch("yingbian.poi._http_json", side_effect=fake_many):
+                saved = self.client.post(
+                    f"/api/plan/{pid}/lodging",
+                    json={"lodging": "湖边公园", "nodeId": "d2_hotel"},
+                ).json()
+            self.assertTrue(saved["ok"], saved)
+            nodes = {n["id"]: n for n in saved["data"]["plan"]["nodes"]}
+            self.assertEqual(nodes["d2_hotel"]["place"], "湖边公园")
+            self.assertNotIn("酒店待定", nodes["d2_hotel"]["title"])
+            self.assertIn("酒店待定", nodes["d1_hotel"]["title"])
+            self.assertIn("湖边公园出发", nodes["d3_meet"]["title"])
+            self.assertNotIn("湖边公园出发", nodes["d2_meet"]["title"])
         finally:
             self.client.delete(f"/api/plans/{pid}")
 

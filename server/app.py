@@ -30,7 +30,7 @@ from yingbian.generate import Preferences, generate
 from yingbian.location import checkin as location_checkin
 from yingbian.location import locate as location_locate
 from yingbian.models import Plan, PlanError, format_time, parse_time
-from yingbian.poi import choose_route, find_by_name
+from yingbian.poi import Poi, choose_route, find_by_name
 from yingbian.regions import load_regions
 from yingbian.patrol import patrol as run_patrol
 from yingbian.discovery import start as start_discovery
@@ -1128,8 +1128,19 @@ def post_lodging(plan_id: str, body: dict = Body(...)):
     if not hotels:
         return _error("NO_HOTEL_NODE", "这是一日行程，没有住宿节点")
 
-    for hotel in hotels:
+    target_id = str(body.get("nodeId") or "").strip()
+    if target_id:
+        targets = [n for n in hotels if n.id == target_id]
+        if not targets:
+            return _error("NOT_FOUND", "这一晚的住宿节点不存在", 404)
+    else:
+        targets = hotels
+
+    edited_night = ""
+    for hotel in targets:
         night = hotel.title.split("第 ")[-1].split(" 晚")[0] if "第 " in hotel.title else ""
+        if night:
+            edited_night = night
         hotel.title = f"{poi.name} · 住宿" + (f"（第 {night} 晚）" if night else "")
         hotel.place = poi.name
         hotel.confidence = poi.data_quality()
@@ -1150,21 +1161,35 @@ def post_lodging(plan_id: str, body: dict = Body(...)):
         if edge is not None:
             previous = working.find(edge.src)
             if previous is not None:
-                route = choose_route(previous, poi, city, avoid_walking=bool(
-                    (working.generation or {}).get("avoidWalking")
-                ))
-                edge.transport = route
-                edge.min_gap = int(route.get("durationMin") or edge.min_gap or 0)
-                hotel.start = min(previous.end + edge.min_gap, 23 * 60 + 58)
-                hotel.end = 23 * 60 + 59
+                prev_data = getattr(previous, "poi", None) or {}
+                if prev_data.get("lat") and prev_data.get("lng"):
+                    prev_poi = Poi(
+                        id=str(prev_data.get("id") or previous.id),
+                        name=str(prev_data.get("name") or previous.title),
+                        category="other",
+                        indoor=False,
+                        lng=float(prev_data["lng"]),
+                        lat=float(prev_data["lat"]),
+                        stay_min=0,
+                        address=str(prev_data.get("address") or ""),
+                    )
+                    route = choose_route(prev_poi, poi, city, avoid_walking=bool(
+                        (working.generation or {}).get("avoidWalking")
+                    ))
+                    edge.transport = route
+                    edge.min_gap = int(route.get("durationMin") or edge.min_gap or 0)
+                    hotel.start = min(previous.end + edge.min_gap, 23 * 60 + 58)
+                    hotel.end = 23 * 60 + 59
 
-    # 第 2 天起的“出发”节点也要跟着改成酒店名。
-    for node in working.nodes:
-        if node.id.endswith("_meet") and node.id != "d1_meet" and node.place in ("", "出发点"):
-            day = node.id.split("_")[0].lstrip("d")
-            node.title = f"{poi.name}出发（第 {day} 天）"
-            node.place = poi.name
-            node.source.note = "从昨晚的住宿出发"
+        # 只改这一晚之后的那个“出发”节点，不能把所有晚上都改成同一家。
+        day_text = hotel.id.split("_")[0].lstrip("d")
+        if day_text.isdigit():
+            next_day = int(day_text) + 1
+            meet = working.find(f"d{next_day}_meet")
+            if meet is not None:
+                meet.title = f"{poi.name}出发（第 {next_day} 天）"
+                meet.place = poi.name
+                meet.source.note = "从昨晚的住宿出发"
 
     working.generation = dict(working.generation or {})
     working.generation["lodging"] = {
@@ -1173,7 +1198,8 @@ def post_lodging(plan_id: str, body: dict = Body(...)):
         "name": poi.name,
         "place": poi.address,
     }
-    _commit_plan(plan_id, working, body, f"把住宿改为「{poi.name}」")
+    label = f"把第 {edited_night} 晚住宿改为「{poi.name}」" if edited_night else f"把住宿改为「{poi.name}」"
+    _commit_plan(plan_id, working, body, label)
     return _ok({"plan": working.to_dict(), "version": working.version})
 
 

@@ -66,6 +66,7 @@ import com.example.yingbian.data.Plan
 import com.example.yingbian.data.parseMinutes
 import com.example.yingbian.data.PlanEdge
 import com.example.yingbian.data.PlanNode
+import com.example.yingbian.data.displayTitle
 import com.example.yingbian.data.PlanSummary
 import com.example.yingbian.data.RepairScheme
 import com.example.yingbian.data.UndoPreview
@@ -103,7 +104,7 @@ fun PlanScreen(
     weatherLoading: Boolean = false,
     onUseLocation: () -> Unit = {},
     onRefreshWeather: () -> Unit = {},
-    onEditLodging: () -> Unit = {},
+    onEditLodging: (PlanNode) -> Unit = {},
     onAdjustStay: (PlanNode) -> Unit = {},
     onAddNode: () -> Unit = {},
     onRefine: () -> Unit = {},
@@ -154,31 +155,9 @@ fun PlanScreen(
             }
         }
 
-        if (plan.days > 1) {
-            val hotel = plan.nodes.firstOrNull { it.overnight }
-            Surface(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp),
-                color = SoftBlue,
-                shape = RoundedCornerShape(10.dp),
-                onClick = onEditLodging,
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = if (hotel?.place.isNullOrBlank()) "住宿：待定" else "住宿：${hotel?.place}",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Ink,
-                    )
-                    Spacer(Modifier.weight(1f))
-                    Text("修改 ›", fontSize = 11.sp, color = Muted)
-                }
-            }
-        }
-        if (plan.unresolvedMustVisit.isNotEmpty() || plan.generationWarnings.isNotEmpty()) {
-            GenerateNotice(plan)
+        val visibleWarnings = plan.generationWarnings.filterNot { it.contains("住宿未指定") }
+        if (plan.unresolvedMustVisit.isNotEmpty() || visibleWarnings.isNotEmpty()) {
+            GenerateNotice(plan, visibleWarnings)
         }
         impact?.let { ImpactSummary(it, eventTitle, onImpact) }
         val dayGroups = plan.nodes.groupBy { it.date.ifBlank { plan.date } }.toList()
@@ -209,7 +188,9 @@ fun PlanScreen(
                             parseMinutes(node.start) <= nowMinutes -> "now"
                             else -> "future"
                         },
-                        onClick = { onAdjustStay(node) },
+                        onClick = {
+                            if (node.overnight) onEditLodging(node) else onAdjustStay(node)
+                        },
                     )
                     if (index < dayNodes.lastIndex) {
                         EdgeLine(edgeBetween(plan, node, dayNodes[index + 1]))
@@ -521,7 +502,6 @@ fun NewPlanScreen(
         startPlace: String,
         startLat: Double?,
         startLng: Double?,
-        lodging: String,
         pace: String,
         maxTransitMin: Int,
     ) -> Unit,
@@ -532,7 +512,6 @@ fun NewPlanScreen(
     var endDate by remember { mutableStateOf("") }
     var text by remember { mutableStateOf("") }
     var startPlace by remember { mutableStateOf("") }
-    var lodging by remember { mutableStateOf("") }
     var pace by remember { mutableStateOf("normal") }
     var startLat by remember { mutableStateOf<Double?>(null) }
     var startLng by remember { mutableStateOf<Double?>(null) }
@@ -642,19 +621,6 @@ fun NewPlanScreen(
         )
 
         Spacer(Modifier.height(22.dp))
-        Text("住在哪里？", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
-        Spacer(Modifier.height(10.dp))
-        OutlinedTextField(
-            value = lodging,
-            onValueChange = { lodging = it },
-            placeholder = { Text("酒店名或附近地标；不填就按待定排", fontSize = 12.sp) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(4.dp))
-        Text("填了住宿，第二天会从酒店出发，晚上回酒店的路也会按地图算。", fontSize = 10.sp, color = Muted)
-
-        Spacer(Modifier.height(22.dp))
         Text("节奏", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Ink)
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -699,7 +665,7 @@ fun NewPlanScreen(
         Button(
             onClick = { onCreate(
                 city, startDate, endDate.ifBlank { startDate }, text,
-                startPlace, startLat, startLng, lodging, pace, 60,
+                startPlace, startLat, startLng, pace, 60,
             ) },
             enabled = !busy && city.isNotBlank() && startDate.isNotBlank(),
             modifier = Modifier.fillMaxWidth().height(48.dp),
@@ -843,7 +809,7 @@ fun RegionPickerDialog(
  * 到现场才发现没排，比不生成还糟。
  */
 @Composable
-private fun GenerateNotice(plan: Plan) {
+private fun GenerateNotice(plan: Plan, warnings: List<String>) {
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
         color = Color(0xFFFFF1F0),
@@ -863,7 +829,7 @@ private fun GenerateNotice(plan: Plan) {
                     color = Muted,
                 )
             }
-            plan.generationWarnings.take(3).forEach { warning ->
+            warnings.take(3).forEach { warning ->
                 Text(
                     text = "· $warning",
                     fontSize = 10.sp,
@@ -1078,7 +1044,7 @@ fun CheckinSheet(
                 Spacer(Modifier.height(6.dp))
                 plan.nodes.forEach { node ->
                     val picked = node.id == nodeId
-                    val label = "${node.start}  ${node.title}${if (node.confirmed) "  · 已锁定" else ""}"
+                    val label = "${node.start}  ${node.displayTitle}${if (node.confirmed) "  · 已锁定" else ""}"
                     if (picked) {
                         Button(
                             onClick = { nodeId = node.id },
@@ -1769,7 +1735,7 @@ fun StayDialog(
     var minutes by remember { mutableStateOf(node.durationMin.toString()) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("调整「${node.title}」停留") },
+        title = { Text("调整「${node.displayTitle}」停留") },
         text = {
             Column {
                 Text("当前 ${node.durationMin} 分钟。改完同一天后面的站点会一起顺延。", fontSize = 12.sp, color = Muted)

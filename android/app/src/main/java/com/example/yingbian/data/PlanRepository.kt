@@ -43,8 +43,8 @@ interface PlanRepository {
     suspend fun undo(): Plan
     /** 撤销前先取“会退回什么”，界面上弹确认框用 */
     suspend fun undoPreview(): UndoPreview
-    /** 生成后补/改住宿：只重算酒店节点和紧邻通勤 */
-    suspend fun updateLodging(lodging: String): Plan
+    /** 生成后补/改某一晚住宿：只重算那一晚的酒店节点和紧邻通勤 */
+    suspend fun updateLodging(lodging: String, nodeId: String? = null): Plan
     /** 调整某站停留时长，同一天后面的站点整体顺延 */
     suspend fun updateStay(nodeId: String, minutes: Int): Plan
     suspend fun setLocked(nodeId: String, locked: Boolean): Plan
@@ -331,7 +331,7 @@ class MockPlanRepository(private val context: Context) : PlanRepository {
         )
     }
 
-    override suspend fun updateLodging(lodging: String): Plan =
+    override suspend fun updateLodging(lodging: String, nodeId: String?): Plan =
         current ?: loadPlan()
 
     override suspend fun updateStay(nodeId: String, minutes: Int): Plan =
@@ -694,11 +694,13 @@ class RemotePlanRepository(
     override suspend fun undoPreview(): UndoPreview =
         PlanJson.parseUndoPreview(request("GET", "/api/plan/$planId/undo/preview"))
 
-    override suspend fun updateLodging(lodging: String): Plan {
+    override suspend fun updateLodging(lodging: String, nodeId: String?): Plan {
+        val body = JSONObject().put("lodging", lodging)
+        if (!nodeId.isNullOrBlank()) body.put("nodeId", nodeId)
         val data = request(
             "POST",
             "/api/plan/$planId/lodging",
-            JSONObject().put("lodging", lodging),
+            body,
         )
         val raw = data.getJSONObject("plan")
         savePlan(raw)

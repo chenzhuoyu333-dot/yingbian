@@ -104,8 +104,8 @@ fun YingBianRoot() {
     var voteOpen by remember { mutableStateOf(false) }
     var activityOpen by remember { mutableStateOf(false) }
     var patrolOpen by remember { mutableStateOf(false) }
-    // 队友的住宿/停留节点状态
-    var lodgingOpen by remember { mutableStateOf(false) }
+    // 住宿按“每晚一个节点”编辑；这里只记当前点开的那一晚
+    var lodgingNodeId by remember { mutableStateOf<String?>(null) }
     var stayNode by remember { mutableStateOf<PlanNode?>(null) }
     // 我的自动寻找服务器状态
     var findingServer by remember { mutableStateOf(false) }
@@ -384,10 +384,10 @@ fun YingBianRoot() {
                         onLocate = {
                             withContext(Dispatchers.IO) { locationHelper.lastKnown() }
                         },
-                        onCreate = { city, start, end, text, place, lat, lng, lodging, pace, maxTransit ->
+                        onCreate = { city, start, end, text, place, lat, lng, pace, maxTransit ->
                             scope.launch {
                                 controller.createTrip(
-                                    city, start, end, text, place, lat, lng, lodging, pace, maxTransit,
+                                    city, start, end, text, place, lat, lng, "", pace, maxTransit,
                                 )
                                 val note = controller.generateNote
                                 if (!note.isNullOrBlank()) {
@@ -454,7 +454,7 @@ fun YingBianRoot() {
                                 onDismissPatrol = { controller.dismissPatrol() },
                                 memberCount = controller.members.size,
                                 voteOpen = controller.vote?.isOpen == true,
-                                onEditLodging = { lodgingOpen = true },
+                                onEditLodging = { node -> lodgingNodeId = node.id },
                                 onAdjustStay = { node ->
                                     if (node.stayBasis.isNotBlank()) stayNode = node
                                     else Toast.makeText(context, "这一站没有可调停留信息", Toast.LENGTH_SHORT).show()
@@ -606,15 +606,16 @@ fun YingBianRoot() {
         )
     }
 
-    if (lodgingOpen && currentPlan != null) {
+    val lodgingNode = currentPlan?.nodes?.firstOrNull { it.id == lodgingNodeId }
+    if (lodgingNode != null) {
         LodgingDialog(
-            initial = currentPlan.nodes.firstOrNull { it.overnight }?.place.orEmpty(),
+            initial = lodgingNode.place,
             busy = controller.loading,
             onSave = { name ->
                 scope.launch {
-                    controller.updateLodging(name)
+                    controller.updateLodging(lodgingNode.id, name)
                     if (controller.error == null) {
-                        lodgingOpen = false
+                        lodgingNodeId = null
                         controller.generateNote?.let {
                             Toast.makeText(context, it, Toast.LENGTH_SHORT).show()
                             controller.clearGenerateNote()
@@ -622,7 +623,7 @@ fun YingBianRoot() {
                     }
                 }
             },
-            onDismiss = { lodgingOpen = false },
+            onDismiss = { lodgingNodeId = null },
         )
     }
 

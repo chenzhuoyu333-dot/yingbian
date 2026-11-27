@@ -47,6 +47,10 @@ data class PlanNode(
     fun endWithShift(shift: Int): String = formatMinutes(parseMinutes(end) + shift)
 }
 
+/** 住宿没填时，行程里只保留一个“过夜”占位，不反复显示“待定”。 */
+val PlanNode.displayTitle: String
+    get() = if (overnight && place.isBlank()) "过夜" else title
+
 /**
  * 从上一站到这一站怎么走。source=amap 是高德路径规划，
  * source=estimate 表示接口不可用、使用了本地估算，界面必须如实区分。
