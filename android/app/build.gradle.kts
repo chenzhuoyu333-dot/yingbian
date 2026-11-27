@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.yingbian"
         minSdk = 24
         targetSdk = 37
-        versionCode = 5
-        versionName = "1.2"
+        versionCode = 13
+        versionName = "1.2.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -276,7 +276,7 @@ fun YingBianRoot() {
                             text = when (controller.screen) {
                                 AppScreen.Home -> "我的计划"
                                 AppScreen.NewPlan -> "新建行程"
-                                AppScreen.Plan -> controller.plan?.title ?: "应变"
+                                AppScreen.Plan -> controller.plan?.let { planDisplayTitle(it) } ?: "应变"
                                 AppScreen.Scheme -> "两套方案对比"
                                 AppScreen.Notify -> "提醒"
                                 AppScreen.Todo -> "待办清单"
@@ -285,20 +285,6 @@ fun YingBianRoot() {
                             fontSize = 17.sp,
                             fontWeight = FontWeight.Bold,
                         )
-                        // 首页不再显示日期：日期在每张卡片上已经有了，标题下再挂一个纯属重复
-                        if (controller.screen != AppScreen.Home && controller.screen != AppScreen.NewPlan) {
-                            Text(
-                                text = controller.plan?.let { plan ->
-                                    if (plan.endDate.isNotBlank() && plan.endDate != plan.date) {
-                                        "${plan.date} → ${plan.endDate}"
-                                    } else {
-                                        plan.date
-                                    }
-                                } ?: "行程变化助手",
-                                fontSize = 11.sp,
-                                color = Muted,
-                            )
-                        }
                     }
                 },
                 actions = {
@@ -430,13 +416,6 @@ fun YingBianRoot() {
                                 onRain = { scope.launch { controller.simulateRain() } },
                                 onImpact = { controller.openImpact() },
                                 onSchemes = { scope.launch { controller.loadSchemes() } },
-                                onDepart = {
-                                    Toast.makeText(
-                                        context,
-                                        "已记录出发；到下一站时点「我到了」",
-                                        Toast.LENGTH_SHORT,
-                                    ).show()
-                                },
                                 onCheckin = { controller.openCheckin() },
                                 weatherLocation = controller.weatherLocation,
                                 weatherError = controller.weatherError,

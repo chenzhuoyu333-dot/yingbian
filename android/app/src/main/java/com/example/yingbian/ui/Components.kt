@@ -203,25 +203,11 @@ fun NodeCard(
                             "次日从这里出发",
                         ).filter { it.isNotBlank() }.joinToString(" · ")
                     } else {
-                        listOf(
-                            node.place,
-                            "${node.durationMin} 分钟",
-                        ).filter { it.isNotBlank() }.joinToString(" · ")
+                        "${node.durationMin} 分钟"
                     },
                     fontSize = 12.sp,
                     color = Muted,
                 )
-                if (node.selectionReason.isNotBlank() || (node.stayBasis.isNotBlank() && !overnight)) {
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = listOf(
-                            node.selectionReason.takeIf { it.isNotBlank() }?.let { "入选：$it" } ?: "",
-                            node.stayBasis.takeIf { it.isNotBlank() && !overnight }?.let { "停留时长：$it" } ?: "",
-                        ).filter { it.isNotBlank() }.joinToString(" · "),
-                        fontSize = 9.sp,
-                        color = Muted,
-                    )
-                }
             }
         }
     }
@@ -271,12 +257,6 @@ fun EdgeLine(edge: PlanEdge?) {
                     fontSize = 10.sp,
                     color = if (transport?.fromMap == true) OkGreen else Muted,
                 )
-                if (transport != null && transport.source == "estimate") {
-                    Text("地图不可用，已留出保守余量", fontSize = 9.sp, color = Muted)
-                }
-                if (transport != null && transport.source != "placeholder" && transport.chosenBy.isNotBlank()) {
-                    Text(transport.chosenBy, fontSize = 9.sp, color = Muted)
-                }
             }
         }
     }

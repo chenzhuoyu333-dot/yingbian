@@ -1,6 +1,7 @@
 package com.example.yingbian.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -86,7 +87,6 @@ fun PlanScreen(
     onRain: () -> Unit,
     onImpact: () -> Unit,
     onSchemes: () -> Unit,
-    onDepart: () -> Unit = {},
     onCheckin: () -> Unit = {},
     onVote: () -> Unit = {},
     onActivity: () -> Unit = {},
@@ -120,30 +120,28 @@ fun PlanScreen(
     var weatherOpen by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // 没有天气（还没生成行程 / 这份行程没有坐标）就整块不显示，不占面积
-        weather?.let { w ->
-            WeatherChip(w, onClick = { weatherOpen = true })
-            if (weatherOpen) {
-                WeatherDialog(
-                    weather = w,
-                    location = weatherLocation,
-                    loading = weatherLoading,
-                    error = weatherError,
-                    onUseLocation = onUseLocation,
-                    onRefresh = onRefreshWeather,
-                    onDismiss = { weatherOpen = false },
-                )
-            }
-        }
-        if (offline) OfflineBanner()
-        CollabBar(
+        PlanHeader(
+            weather = weather,
             memberCount = memberCount,
             voteOpen = voteOpen,
-            onVote = onVote,
-            onActivity = onActivity,
-            onLocate = onLocate,
             locateLoading = locateLoading,
+            onWeather = { weatherOpen = true },
+            onLocate = onLocate,
+            onActivity = onActivity,
+            onVote = onVote,
         )
+        if (weatherOpen && weather != null) {
+            WeatherDialog(
+                weather = weather,
+                location = weatherLocation,
+                loading = weatherLoading,
+                error = weatherError,
+                onUseLocation = onUseLocation,
+                onRefresh = onRefreshWeather,
+                onDismiss = { weatherOpen = false },
+            )
+        }
+        if (offline) OfflineBanner()
         // 管家提醒：只有真有事才出现，用户可以点"知道了"收起
         patrol?.let { result ->
             if (result.needsAttention && !patrolDismissed) {
@@ -155,16 +153,6 @@ fun PlanScreen(
             }
         }
 
-        if (plan.understanding.isNotBlank()) {
-            // 让用户一眼看到"AI 把你的话理解成了什么"，
-            // 而不是对着一份看不懂的行程发愣
-            Text(
-                text = "理解：" + plan.understanding,
-                fontSize = 10.sp,
-                color = Muted,
-                modifier = Modifier.padding(horizontal = 18.dp, vertical = 2.dp),
-            )
-        }
         if (plan.days > 1) {
             val hotel = plan.nodes.firstOrNull { it.overnight }
             Surface(
@@ -197,12 +185,6 @@ fun PlanScreen(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
         ) {
-            item {
-                SectionHeader(
-                    title = if (dayGroups.size > 1) "多日行程" else "行程安排",
-                    subtitle = "${dayGroups.size} 天 · ${plan.nodes.size} 个节点 · 版本 ${plan.version}",
-                )
-            }
             dayGroups.forEachIndexed { dayIndex, (date, dayNodes) ->
                 item(key = "day-header-$date") {
                     DayHeader(date, dayIndex + 1, dayNodes.size)
@@ -251,7 +233,6 @@ fun PlanScreen(
             onRain = onRain,
             onImpact = onImpact,
             onSchemes = onSchemes,
-            onDepart = onDepart,
             onCheckin = onCheckin,
         )
     }
@@ -290,56 +271,153 @@ private fun formatIsoDate(value: String): String {
     }.getOrDefault(value)
 }
 
+/** 行程页标题只保留“杭州两日游”：去掉日期、括号和“据偏好生成”。 */
+fun planDisplayTitle(plan: Plan): String {
+    val cleaned = plan.title
+        .replace(Regex("[（(][^）)]*[）)]"), "")
+        .trim()
+    val withoutDate = cleaned
+        .replace(Regex("^\\d{4}-\\d{2}-\\d{2}(?:\\s*[—–~-]\\s*\\d{4}-\\d{2}-\\d{2})?\\s*"), "")
+        .trim()
+    val match = Regex("^(.+?)\\s*(?:\\d+|[一二两三四五六七八九十]+)\\s*日行程$").find(withoutDate)
+    if (match != null) {
+        val city = match.groupValues[1].trim().removeSuffix("市").removeSuffix("县")
+        if (city.isNotBlank()) {
+            val days = plan.days.takeIf { it > 0 } ?: 1
+            return city + chineseDays(days) + "游"
+        }
+    }
+    return withoutDate.ifBlank { plan.title }
+}
+
+private fun chineseDays(days: Int): String = when (days) {
+    1 -> "一日"
+    2 -> "两日"
+    3 -> "三日"
+    4 -> "四日"
+    5 -> "五日"
+    6 -> "六日"
+    7 -> "七日"
+    8 -> "八日"
+    9 -> "九日"
+    10 -> "十日"
+    else -> "${days}日"
+}
+
+/** 行程页顶部：天气 / 定位 / 修改记录三个等大方块。 */
 @Composable
-private fun WeatherChip(weather: Weather, onClick: () -> Unit) {
-    // 只占一行：天气 + 降雨概率 + 来源提示。详细信息点进对话框看。
+private fun PlanHeader(
+    weather: Weather?,
+    memberCount: Int,
+    voteOpen: Boolean,
+    locateLoading: Boolean,
+    onWeather: () -> Unit,
+    onLocate: () -> Unit,
+    onActivity: () -> Unit,
+    onVote: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (weather != null) {
+            WeatherSquare(
+                weather = weather,
+                onClick = onWeather,
+                modifier = Modifier.size(72.dp),
+            )
+        } else {
+            HeaderChip(
+                text = "天气",
+                onClick = onWeather,
+                enabled = false,
+                modifier = Modifier.size(72.dp),
+            )
+        }
+        HeaderChip(
+            text = if (locateLoading) "定位中…" else "定位",
+            onClick = onLocate,
+            enabled = !locateLoading,
+            modifier = Modifier.size(72.dp),
+        )
+        HeaderChip(
+            text = "修改记录",
+            onClick = onActivity,
+            modifier = Modifier.size(72.dp),
+        )
+        if (memberCount > 1) {
+            HeaderChip(
+                text = if (voteOpen) "投票中…" else "投票",
+                onClick = onVote,
+                modifier = Modifier.size(72.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun HeaderChip(
+    text: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier,
+) {
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+        modifier = modifier,
+        color = Color(0xFFF3F0FF),
+        shape = RoundedCornerShape(12.dp),
+        onClick = onClick,
+        enabled = enabled,
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize().padding(4.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = text,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (enabled) Ink else Muted,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+            )
+        }
+    }
+}
+
+@Composable
+private fun WeatherSquare(weather: Weather, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
         color = if (weather.isDemo) Color(0xFFFFF8E1) else SoftBlue,
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(12.dp),
         onClick = onClick,
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier = Modifier.fillMaxSize().padding(6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
         ) {
             Text(
                 text = weather.text.ifBlank { "天气" },
-                fontSize = 12.sp,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
                 color = Ink,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
             )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = "${(weather.rainProb * 100).toInt()}%",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                color = if (weather.rainProb >= 0.6) ConflictOrange else OkGreen,
-            )
-            if (weather.isDemo) {
+            Spacer(Modifier.height(2.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("降雨", fontSize = 9.sp, color = Muted)
+                Spacer(Modifier.width(2.dp))
                 Text(
-                    text = "  演示数据",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF8A5A00),
+                    text = "${(weather.rainProb * 100).toInt()}%",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (weather.rainProb >= 0.6) ConflictOrange else OkGreen,
                 )
-            } else {
-                val source = when {
-                    weather.source.contains("和风") -> "和风"
-                    weather.source.contains("高德") -> "高德"
-                    weather.source.isBlank() -> ""
-                    else -> "实况"
-                }
-                if (source.isNotBlank()) {
-                    Text(
-                        text = "  $source",
-                        fontSize = 10.sp,
-                        color = Muted,
-                    )
-                }
             }
-            Spacer(Modifier.weight(1f))
-            Text(text = "详情 ›", fontSize = 10.sp, color = Muted)
         }
     }
 }
@@ -828,50 +906,6 @@ private fun GenerateNotice(plan: Plan) {
 }
 
 /**
- * 协作条：谁在一起出行、现在有没有在投票。
- *
- * 放在天气卡下面而不是藏进设置，因为多人是这件产品的核心之一，
- * 演示时要一眼能看到"还有谁在"。
- */
-@Composable
-private fun CollabBar(
-    memberCount: Int,
-    voteOpen: Boolean,
-    onVote: () -> Unit,
-    onActivity: () -> Unit,
-    onLocate: () -> Unit = {},
-    locateLoading: Boolean = false,
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
-        color = Color(0xFFF3F0FF),
-        shape = RoundedCornerShape(12.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = if (memberCount > 1) "$memberCount 人同行" else "单人演示",
-                fontSize = 11.sp,
-                color = Muted,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(onClick = onLocate, enabled = !locateLoading) {
-                Text(if (locateLoading) "定位中…" else "定位", fontSize = 11.sp)
-            }
-            TextButton(onClick = onActivity) { Text("记录", fontSize = 11.sp) }
-            // 一个人出行时没有“投票”对象，按钮直接不出现，避免点了没反应。
-            if (memberCount > 1) {
-                TextButton(onClick = onVote) {
-                    Text(if (voteOpen) "投票中…" else "投票", fontSize = 11.sp)
-                }
-            }
-        }
-    }
-}
-
-/**
  * 定位检查结果：先回答"你在哪、该在哪、落后多少"，再给改法。
  */
 @Composable
@@ -951,30 +985,19 @@ private fun PlanBottomBar(
     onRain: () -> Unit,
     onImpact: () -> Unit,
     onSchemes: () -> Unit,
-    onDepart: () -> Unit,
     onCheckin: () -> Unit,
     weatherAlert: Boolean = false,
 ) {
     Surface(color = Color.White, shadowElevation = 10.dp) {
         Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
             val enabled = !loading && !offline
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = onDepart,
-                    enabled = !loading,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
-                ) {
-                    Text("我出发了", fontSize = 12.sp)
-                }
-                Button(
-                    onClick = onCheckin,
-                    enabled = enabled,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp),
-                ) {
-                    Text("我到了", fontSize = 12.sp)
-                }
+            Button(
+                onClick = onCheckin,
+                enabled = enabled,
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 9.dp),
+            ) {
+                Text("我到了", fontSize = 13.sp)
             }
             if (loading) {
                 Text(
@@ -984,24 +1007,8 @@ private fun PlanBottomBar(
                     color = Muted,
                     textAlign = TextAlign.Center,
                 )
-            } else if (impact == null && weatherAlert) {
-                // 只有查到真实降雨才出现这一条（概率来自天气接口）
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "行程地点可能要下雨",
-                        fontSize = 12.sp,
-                        color = Ink,
-                        modifier = Modifier.weight(1f),
-                    )
-                    TextButton(onClick = onRain, enabled = !offline) {
-                        Text(if (offline) "离线" else "看怎么改", fontSize = 12.sp)
-                    }
-                }
-            } else {
+            } else if (impact != null) {
+                // 只有真的检测到变化时才给“看影响 / 看方案”，不再常驻一个入口。
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedButton(
@@ -1026,6 +1033,23 @@ private fun PlanBottomBar(
                         fontSize = 11.sp,
                         color = Muted,
                     )
+                }
+            } else if (weatherAlert) {
+                // 只有查到真实降雨才出现这一条（概率来自天气接口）
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "行程地点可能要下雨",
+                        fontSize = 12.sp,
+                        color = Ink,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onRain, enabled = !offline) {
+                        Text(if (offline) "离线" else "看怎么改", fontSize = 12.sp)
+                    }
                 }
             }
         }
@@ -1651,15 +1675,25 @@ fun UndoDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var expanded by remember(preview) { mutableStateOf(false) }
+    val changes = preview?.changes.orEmpty()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (preview?.canUndo == true) "撤销到上一版？" else "没有可撤销的改动") },
         text = {
             Column {
                 Text(preview?.summary ?: "正在读取…", fontSize = 13.sp, color = Ink)
-                if (!preview?.changes.isNullOrEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    preview?.changes?.forEach { change ->
+                if (changes.isNotEmpty()) {
+                    Text(
+                        text = if (expanded) "收起详情" else "共 ${changes.size} 处改动 · 点击查看详情",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .padding(top = 8.dp)
+                            .clickable { expanded = !expanded },
+                    )
+                    if (expanded) changes.forEach { change ->
                         Text(
                             text = "· ${change.title}：${change.text}",
                             fontSize = 11.sp,
